@@ -33,7 +33,7 @@ class GrammarNetwork:
         self.save_path=save_path
 
         # SNN Backend Setup
-        self.dt = 1e-3  # 0.1 ms timestep
+        self.dt = 1e-4  # 0.1 ms timestep
         self.neurons = NeuronPopulation(N=self.V, dt=self.dt)
         self.synapses = [] # This will hold SynapseGroup objects
         self.net = None # This will be the SNN object
@@ -102,7 +102,7 @@ class GrammarNetwork:
         num_synapses = int(self.V * self.V * 0.001)
         pre_ids = cp.random.randint(0, self.V, num_synapses, dtype=cp.int32)
         post_ids = cp.random.randint(0, self.V, num_synapses, dtype=cp.int32)
-        initial_weights = cp.random.uniform(1e-9, 5e-9, num_synapses).astype(cp.float32)
+        initial_weights = cp.random.uniform(1e-10, 1e-9, num_synapses).astype(cp.float32)
         
         connections = []
         # This conversion to list of tuples is slow, but required by from_connections
@@ -137,7 +137,7 @@ class GrammarNetwork:
 
         # 3. Run the learning simulation
         print(f"[Training] Starting learning loop on {len(tokens)} tokens...")
-        I_inject = 2e-9 # 4 nA
+        I_inject = 4e-9 # 4 nA
         sim_steps_per_token = 100 # ms to simulate for each word
         
         start_time = time.time()

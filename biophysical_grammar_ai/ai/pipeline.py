@@ -22,7 +22,7 @@ def infer_domain(tokens: List[str]) -> str:
     return best[0]
 class Pipeline:
     def __init__(self, data_dir: str):
-        self.net=LanguageNetwork(n_pyr=12, n_inh=4)
+        self.net=LanguageNetwork(n_pyr_l23=12, n_pyr_l56=12, n_pv=4, n_sst=4, n_vip=4)
         self.vocab=build_vocab(target_size=3000)
         self.emb=build_embeddings(self.vocab, dim=256)
         self.gn=GrammarNetwork(self.vocab, save_path=f"{data_dir}/grammar.json")
