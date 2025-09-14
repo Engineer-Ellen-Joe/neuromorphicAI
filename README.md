@@ -25,6 +25,7 @@ A hybrid AI under development, inspired by neurons and synapses in the brain usi
 Python 3.12.10 and git
 
 Need CUDA Toolkit
+
 Need to install numpy and cupy packages
 
 ## EllenProject installation
