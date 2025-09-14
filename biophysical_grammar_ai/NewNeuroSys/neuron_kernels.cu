@@ -1,23 +1,31 @@
-/* Hodgkin-Huxley 모델의 게이트 동역학을 계산하는 CUDA C++ 코드
-   각 alpha/beta 함수는 특정 이온 채널 게이트의 열림/닫힘 비율을 계산 */
+/* neuron_kernels.cu
+****************************************************************************************************
+Hodgkin-Huxley 모델의 게이트 동역학을 계산하는 CUDA C++ 코드
+  - 각 alpha/beta 함수는 특정 이온 채널 게이트의 열림/닫힘 속도를 계산
+  - update_gates: 게이트 변수(m,h,n)를 다음 시간 스텝으로 업데이트
+  - update_voltage: 뉴런 전압을 Euler 적분으로 업데이트하고 스파이크 이벤트를 기록
+  - compute_axial_currents: 연결된 뉴런 간 축성 전류 계산
+  - compute_synaptic_currents: 시냅스 전류 계산
+****************************************************************************************************
+*/
 
-// K+ 채널 활성화 게이트 'n'의 열림 비율
+// K+ 채널 활성화 게이트 'n'의 열림 비율(alpha_n)
 __device__ double alpha_n(double V) {
   if (abs(V - (-55.0)) < 1e-5) { return 0.1; }
   return 0.01 * (V + 55.0) / (1.0 - exp(-0.1 * (V + 55.0)));
 }
 
-// K+ 채널 활성화 게이트 'n'의 닫힘 비율
+// K+ 채널 활성화 게이트 'n'의 닫힘 비율(beta_n)
 __device__ double beta_n(double V) { return 0.125 * exp(-0.0125 * (V + 65.0)); }
 
-// Na+ 채널 활성화 게이트 'm'의 열림 비율
+// Na+ 채널 활성화 게이트 'm'의 열림 비율(alpha_m)
 __device__ double alpha_m(double V) {
   if (abs(V - (-40.0)) < 1e-5) { return 1.0; }
   return 0.1 * (V + 40.0) / (1.0 - exp(-0.1 * (V + 40.0)));
 }
-__device__ double beta_m(double V) { return 4.0 * exp(-(V + 65.0) / 18.0); }      // Na+ 채널 활성화 게이트 'm'의 닫힘 비율
-__device__ double alpha_h(double V) { return 0.07 * exp(-0.05 * (V + 65.0)); }      // Na+ 채널 비활성화 게이트 'h'의 열림 비율
-__device__ double beta_h(double V) { return 1.0 / (1.0 + exp(-0.1 * (V + 35.0))); } // Na+ 채널 비활성화 게이트 'h'의 닫힘 비율
+__device__ double beta_m(double V) { return 4.0 * exp(-(V + 65.0) / 18.0); }        // Na+ 채널 활성화 게이트 'm'의 닫힘 비율(beta_m)
+__device__ double alpha_h(double V) { return 0.07 * exp(-0.05 * (V + 65.0)); }      // Na+ 채널 비활성화 게이트 'h'의 열림 비율(alpha_h)
+__device__ double beta_h(double V) { return 1.0 / (1.0 + exp(-0.1 * (V + 35.0))); } // Na+ 채널 비활성화 게이트 'h'의 닫힘 비율(beta_h)
 
 extern "C" __global__
 void update_gates(
@@ -40,8 +48,9 @@ void update_gates(
   double tau_m = 1.0 / (am + bm); double m_inf = am * tau_m;
   double tau_h = 1.0 / (ah + bh); double h_inf = ah * tau_h;
 
-  /* 분석적 해법을 사용하여 다음 시간 스텝의 게이트 변수 값을 업데이트
-     dn/dt = (n_inf - n) / tau_n  =>  n(t+dt) = n_inf + (n(t) - n_inf) * exp(-dt / tau_n) */
+  /* 분석적 해법을 사용하여 게이트 변수 업데이트
+     n(t+dt) = n_inf + (n(t) - n_inf) * exp(-dt / tau_n)
+     => 단순 지수적 접근법으로 안정 상태로 수렴하도록 계산 */
     n[i] = n_inf + (n[i] - n_inf) * exp(-dt / tau_n);
     m[i] = m_inf + (m[i] - m_inf) * exp(-dt / tau_m);
     h[i] = h_inf + (h[i] - h_inf) * exp(-dt / tau_h);
@@ -85,10 +94,10 @@ void update_voltage(
   double I_ion = I_leak + I_k + I_na;
   double I_total = I_ext_i + I_axial_i + I_syn_i - I_ion;
 
-  // 전압 적분 (explicit Euler 형태)
+  // 전압 업데이트/적분 (explicit Euler 형태)
   double v_new = v_prev + (dt / C_m[i]) * I_total;
 
-  // 스파이크 이벤트 기록: "rising crossing" 기반으로 체크 (전압은 리셋하지 않음)
+  // 스파이크 이벤트 기록: AIS 구간에서 threshold crossing 시만 spike = 1
   if (compartment_type[i] == ais_type_id) {
     // previous below threshold and new above => crossing -> spike event
     if ((v_prev < spike_threshold) && (v_new >= spike_threshold)) {
@@ -124,6 +133,7 @@ void compute_axial_currents(
 
   double current = g * (v_from - v_to);
 
+  // 양방향 축성 전류 계산 (from -> to)
   atomicAdd(&I_axial_out[from_idx], -current);
   atomicAdd(&I_axial_out[to_idx], current);
 }
@@ -143,11 +153,13 @@ void compute_synaptic_currents(
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   if (i >= n_synapses) return;
 
+  // 지수적 감쇠로 시냅스 컨덕턴스 업데이트
   conductance[i] *= exp(-dt / tau_decay[i]);
 
   int post_idx = post_comp_map[i];
   double v_post = V[post_idx];
-  double current = conductance[i] * weight[i] * (v_post - E_syn[i]);
+  double current = conductance[i] * weight[i] * (v_post - E_syn[i]); // 시냅스 전류: I = g_syn * w * (V_post - E_syn)
 
+  // 뉴런에 전류 더함 (postsynaptic neuron)
   atomicAdd(&I_syn_out[post_idx], -current);
 }
