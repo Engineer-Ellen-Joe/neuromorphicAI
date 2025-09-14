@@ -15,7 +15,7 @@ A hybrid AI under development, inspired by neurons and synapses in the brain usi
 > + May run slower due to optimization issues.  
 > + Code with syntax errors will not be pushed.
 
-> **[testDev](https://github.com/Ellen-project/Public-repository/tree/testDev)**
+> **[testDev (experimental)](https://github.com/Ellen-project/Public-repository/tree/testDev)**
 > + Unverified code will be uploaded here.
 > + Experimental structural changes to neuron models and CUDA kernels will be uploaded.
 > + This is a personal research playground.
