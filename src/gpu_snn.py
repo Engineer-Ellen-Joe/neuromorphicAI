@@ -135,7 +135,7 @@ class GpuSNN:
 
     def _load_cuda_kernels(self):
         """CUDA 커널 로드 (RawKernel)"""
-        with open('neuron_kernels.cu', 'r', encoding='utf-8') as f:
+        with open('kernels/neuron_kernels.cu', 'r', encoding='utf-8') as f:
             cuda_source = f.read()
         self.update_gates_kernel = cp.RawKernel(cuda_source, 'update_gates')
         self.update_voltage_kernel = cp.RawKernel(cuda_source, 'update_voltage')
