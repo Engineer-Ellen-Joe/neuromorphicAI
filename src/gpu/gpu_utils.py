@@ -11,7 +11,7 @@ class GPUUtils:
     def load_kernel(self, name: str, filename: str, func_names: list[str]):
         """CUDA 커널 파일을 로드해서 RawKernel 객체를 보관"""
         filepath = self.kernel_dir / filename
-        code = filepath.read_text()
+        code = filepath.read_text(encoding="utf-8")
         module = cp.RawModule(
             code=code,
             options=(

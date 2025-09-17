@@ -3,31 +3,36 @@
 
 extern "C" {
 
-// Hodgkin-Huxley gating update
+// HH gating update
 __global__ void update_gates_kernel(
   float* m, float* h, float* n,
   const float* v,
-  const SimConstants consts,
   int N
 ) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
 
-  // TODO: implement HH gating update (alpha/beta functions)
+  // 예시: constant memory 접근
+  float dt = d_consts.dt;
+  float gNa = d_consts.g_na;
+
+  // TODO: alpha/beta 계산하고 m,h,n 업데이트
 }
 
-// Voltage update with ionic & synaptic currents
+// Voltage update
 __global__ void update_voltage_kernel(
   float* v,
   const float* m, const float* h, const float* n,
   const float* I_syn,
-  const SimConstants consts,
   int N
 ) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
 
-  // TODO: implement membrane voltage update (Euler integration)
+  float Cm = d_consts.Cm;
+  float dt = d_consts.dt;
+
+  // TODO: 막전압 업데이트
 }
 
 // Spike detection

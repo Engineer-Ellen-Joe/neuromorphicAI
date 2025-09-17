@@ -20,9 +20,9 @@ def main():
     # 2. CPU 쪽 뉴런 상태 초기화 (ground truth / 기록용)
     neuron_state = NeuronState(config.N_neurons)
 
-    # 3. GPU 유틸 및 뉴런 연산자 초기화
+    # 3. GPU 유틸 및 뉴런 연산자 초기화 (config 전달!)
     gpu_utils = GPUUtils()
-    neuron_ops = NeuronOps(gpu_utils, config.N_neurons)
+    neuron_ops = NeuronOps(gpu_utils, config.N_neurons, config)
 
     # 4. 로거 & 시각화 준비
     logger = Logger()
@@ -30,8 +30,8 @@ def main():
 
     # 5. 시뮬레이션 루프
     for t in range(config.T):
-        neuron_ops.step(config.sim_consts)   # GPU에서 한 스텝 진행
-        v = cp.asnumpy(neuron_ops.v)         # CPU로 결과 복사
+        neuron_ops.step()                     # GPU에서 한 스텝 진행
+        v = cp.asnumpy(neuron_ops.v)          # CPU로 결과 복사
         spikes = cp.asnumpy(neuron_ops.spikes)
 
         # 기록
