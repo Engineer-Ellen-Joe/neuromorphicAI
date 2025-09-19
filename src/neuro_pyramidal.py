@@ -11,14 +11,14 @@ from typing import List, Optional, Dict, Tuple
 
 @dataclass
 class SomaParams:
-    C_m: float = 200e-12
+    C_m: float = 200e-12 #
     g_L: float = 10e-9
     E_L: float = -70e-3
     I_ext: float = 0.0
 
 @dataclass
 class AISParams:
-    C_m: float = 40e-12
+    C_m: float = 40e-12 #
     g_L: float = 8e-9
     E_L: float = -70e-3
     V_T: float = -50e-3
@@ -35,7 +35,7 @@ class CouplingParams:
 class SynapseParams:
     g_max: float = 2.5e-9
     E_rev: float = 0.0
-    tau_decay: float = 5e-3
+    tau_decay: float = 20e-3 # 5e-3
     A_plus: float = 0.005
     A_minus: float = 0.005
     tau_pre: float = 20e-3
@@ -138,6 +138,7 @@ void update_neurons_and_synapses(
         if (!in_refrac && V_ais[nid] >= ais_V_spike[nid]) {
             spiked_now[nid] = 1;
             V_ais[nid] = ais_V_reset[nid];
+            V_soma[nid] = ais_V_reset[nid]; // BUG FIX: Soma 전압도 함께 리셋하여 억제성 전류 발생 방지
             refrac_until[nid] = t + ais_t_refrac[nid];
         } else {
             spiked_now[nid] = 0;
@@ -184,9 +185,11 @@ void update_neurons_and_synapses(
         
         // --- Apply plasticity rules (STDP & BCM) ---
         double dw = 0.0;
-        // STDP
-        if (pre_spiked) dw += syn_A_plus[sid] * post_trace;
-        if (post_spiked) dw -= syn_A_minus[sid] * pre_trace;
+        // STDP (Corrected Logic)
+        // On post-spike, potentiate based on pre-trace (causal, pre-then-post)
+        if (pre_spiked) dw += syn_A_plus[sid] * pre_trace;
+        // On pre-spike, depress based on post-trace (anti-causal, post-then-pre)
+        if (post_spiked) dw -= syn_A_minus[sid] * post_trace;
         
         // BCM (continuous)
         double dw_bcm_dt = syn_eta_bcm[sid] * r_pre * r_post * (r_post - theta_m);
@@ -201,12 +204,13 @@ void update_neurons_and_synapses(
         g += pending_g_incr[sid];
         // If presynaptic neuron spiked now, schedule a future increment
         if (pre_spiked) {
-            // Note: This simple model adds to the same slot. A more complex queue would be needed
-            // for multiple spikes within the delay window. For now, it overwrites.
             pending_g_incr[sid] = syn_g_max[sid] * w;
-        } else {
+        }
+        /* BUGFIX?
+        else {
             pending_g_incr[sid] = 0.0; // Clear after use
         }
+        */
         
         // --- Calculate postsynaptic current (for NEXT time step) ---
         // Current flows INTO the postsynaptic neuron.
@@ -313,8 +317,6 @@ class CuPyNetwork:
         else:
             w_init_arr = cp.array(w_init, dtype=cp.float64)
 
-        # neuro_pyramidal_cupy.py 파일의 connect 메서드
-
         state_init = {
             'syn_g': cp.zeros(num_synapses, dtype=cp.float64),
             'syn_w': w_init_arr,
@@ -323,7 +325,6 @@ class CuPyNetwork:
             'syn_r_pre': cp.zeros(num_synapses, dtype=cp.float64),
             'syn_r_post': cp.zeros(num_synapses, dtype=cp.float64),
             'syn_theta_m': cp.full(num_synapses, 1.0, dtype=cp.float64),
-        # 'pending_g_incr': cp.zeros(num_synapses, dtype=cp.float64), # <-- REMOVE OR COMMENT OUT THIS LINE
         }
         
         for key, val_arr in state_init.items():
@@ -349,33 +350,34 @@ class CuPyNetwork:
         if not hasattr(self, 'comm_arrays'):
             self._prepare_run()
 
-        # Reset total synaptic current for this step
+        # Reset synaptic current accumulator
         self.comm_arrays['I_syn_total'].fill(0)
 
-        # Get the conductance increments that were scheduled `delay` steps ago
-        pending_g = self.g_incr_buffer[self.g_incr_buffer_idx].copy()
-        # Clear the buffer slot for future use
-        self.g_incr_buffer[self.g_incr_buffer_idx].fill(0)
+        # --- Handle spike delay buffer ---
+        # The kernel will read from the buffer at the current index, and write new spikes to it.
+        # We pass a view of the buffer slice, not a copy, so the kernel modifies it in-place.
+        pending_g_buffer = self.g_incr_buffer[self.g_incr_buffer_idx]
 
-        # Determine grid and block sizes
+        # Determine grid and block sizes for the kernel launch
         threads_per_block = 256
         max_n = max(self.n_neurons, self.n_synapses)
         blocks = (max_n + threads_per_block - 1) // threads_per_block
 
+        # This list MUST EXACTLY match the kernel signature
         kernel_args = [
             # Scalar params
             self.n_neurons, self.n_synapses, self.time, self.dt,
-            # Neuron states
+            # Neuron states (read/write)
             self.neuron_states['V_soma'], self.neuron_states['V_ais'], self.neuron_states['refrac_until'],
-            # Neuron params
+            # Neuron Params (read-only)
             self.neuron_params['soma_C_m'], self.neuron_params['soma_g_L'], self.neuron_params['soma_E_L'], self.neuron_params['soma_I_ext'],
             self.neuron_params['ais_C_m'], self.neuron_params['ais_g_L'], self.neuron_params['ais_E_L'], self.neuron_params['ais_V_T'],
             self.neuron_params['ais_Delta_T'], self.neuron_params['ais_V_spike'], self.neuron_params['ais_V_reset'], self.neuron_params['ais_t_refrac'],
             self.neuron_params['coup_g_c'],
-            # Synapse states
+            # Synapse States (read/write)
             self.synapse_states['syn_g'], self.synapse_states['syn_w'], self.synapse_states['syn_pre_trace'], self.synapse_states['syn_post_trace'],
             self.synapse_states['syn_r_pre'], self.synapse_states['syn_r_post'], self.synapse_states['syn_theta_m'],
-            # Synapse params (excluding 'delay', which is not a kernel param)
+            # Synapse Params (read-only)
             self.synapse_params['syn_g_max'], self.synapse_params['syn_E_rev'], self.synapse_params['syn_tau_decay'],
             self.synapse_params['syn_A_plus'], self.synapse_params['syn_A_minus'], self.synapse_params['syn_tau_pre'], self.synapse_params['syn_tau_post'],
             self.synapse_params['syn_eta_bcm'], self.synapse_params['syn_tau_rate'], self.synapse_params['syn_tau_theta'],
@@ -384,17 +386,17 @@ class CuPyNetwork:
             self.synapse_params['syn_pre_idx'], self.synapse_params['syn_post_idx'],
             # Communication arrays
             self.comm_arrays['spiked_now'], self.comm_arrays['I_syn_total'],
-            # Spike event handling
-            pending_g
+            # Spike event handling (this is both input and output)
+            pending_g_buffer
         ]
         
         _NEURON_SYNAPSE_KERNEL((blocks,), (threads_per_block,), tuple(kernel_args))
 
-        # After the kernel runs, `spiked_now` is filled. Use it to update the g_incr_buffer for the future.
-        # Note: The kernel already calculated the *magnitude* of the increment and stored it back in `pending_g`.
-        # This is a bit of a hack to pass data out of the kernel.
-        self.g_incr_buffer[self.g_incr_buffer_idx] = pending_g
+        # Advance the circular buffer index for the next step.
         self.g_incr_buffer_idx = (self.g_incr_buffer_idx + 1) % self.g_incr_buffer.shape[0]
+        # Clear the *next* slot in the buffer that will be used for a future time step.
+        self.g_incr_buffer[self.g_incr_buffer_idx].fill(0)
+
 
         # Record spikes if monitoring
         if self.spike_monitors:
