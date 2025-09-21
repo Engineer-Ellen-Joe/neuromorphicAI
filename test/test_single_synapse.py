@@ -38,7 +38,7 @@ def run_single_synapse_test():
 
     # 3. 시냅스 설정 (학습 기능 없이, 최대 힘으로 고정)
     syn_p = SynapseParams(
-        g_max=250.0e-9,  # 이전 테스트에서 설정한 최대 전도도
+        g_max=2.5,         # g_max 단위는 nS입니다 (250e-9 S -> 2.5 nS)
         tau_decay=20e-3, # 이전 테스트에서 설정한 지속 시간
         A_plus=0.0,      # 학습 기능 비활성화
         A_minus=0.0,     # 학습 기능 비활성화
@@ -83,7 +83,6 @@ def run_single_synapse_test():
         print(f"   (입력 후 {delay*1000:.2f} ms 만에 반응)")
     else:
         print("-> 결과: 실패. 단일 시냅스로는 스파이크를 만들지 못했습니다.")
-        print("   이는 커널의 시냅스 전류 계산/적용 부분에 근본적인 문제가 있음을 시사합니다.")
 
 if __name__ == '__main__':
     run_single_synapse_test()
