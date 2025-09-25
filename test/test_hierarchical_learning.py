@@ -105,7 +105,11 @@ def run_learning_L1(neurons, patterns, trials, dt):
             inhibition_timers -= 1
             winner_found = False
 
-            for i, neuron in enumerate(neurons):
+            neuron_indices = list(range(num_neurons))
+            np.random.shuffle(neuron_indices)
+
+            for i in neuron_indices:
+                neuron = neurons[i]
                 if winner_found: continue
                 current = inhibition_current if inhibition_timers[i] > 0 else base_current
                 result = neuron.step(presynaptic_spikes, external_current=current)
@@ -131,6 +135,10 @@ def run_learning_L2(neurons_L1, neuron_L2, patterns, trials, dt):
     sequence_gap_steps = int(20 * 1e-3 / dt)
     total_steps = p_steps * 2 + sequence_gap_steps
 
+    # 경쟁 로직에 필요한 변수 추가
+    inhibition_current = -200e-12
+    inhibition_duration_steps = int(2e-3 / dt)
+
     # 1계층은 더 이상 학습하지 않음
     for n in neurons_L1: n.input_learning_rate_gpu = cp.float64(0.0)
 
@@ -139,8 +147,9 @@ def run_learning_L2(neurons_L1, neuron_L2, patterns, trials, dt):
         neuron_L2.reset_state()
         
         L1_outputs = np.zeros((total_steps, num_neurons_L1))
+        inhibition_timers = np.zeros(num_neurons_L1)
 
-        # 1계층은 학습 없이 '반응'만 함
+        # 1계층은 '경쟁'을 통해 '반응'만 함
         for i, pattern_spikes in enumerate(context_sequence):
             start_step = i * (p_steps + sequence_gap_steps)
             end_step = start_step + p_steps
@@ -150,10 +159,23 @@ def run_learning_L2(neurons_L1, neuron_L2, patterns, trials, dt):
                     if (step - start_step) == t:
                         presynaptic_spikes[afferent_idx] = 1.0
                 
-                for n_idx, neuron in enumerate(neurons_L1):
-                    result = neuron.step(presynaptic_spikes, external_current=base_current)
+                inhibition_timers -= 1
+                winner_found = False
+                
+                neuron_indices = list(range(num_neurons_L1))
+                np.random.shuffle(neuron_indices)
+
+                for n_idx in neuron_indices:
+                    neuron = neurons_L1[n_idx]
+                    if winner_found: continue
+                    current = inhibition_current if inhibition_timers[n_idx] > 0 else base_current
+                    result = neuron.step(presynaptic_spikes, external_current=current)
                     if result.axon_spike > 0:
+                        winner_found = True
                         L1_outputs[step, n_idx] = 1.0
+                        for other_idx in range(num_neurons_L1):
+                            if n_idx != other_idx:
+                                inhibition_timers[other_idx] = inhibition_duration_steps
         
         # 2계층은 1계층의 반응을 보고 '학습'함
         for step in range(total_steps):
@@ -174,6 +196,10 @@ def run_verification(neurons, neuron_C, patterns, dt):
     base_current = 80e-12
     sequence_gap_steps = int(20 * 1e-3 / dt)
 
+    # 경쟁 로직에 필요한 변수 추가
+    inhibition_current = -200e-12
+    inhibition_duration_steps = int(2e-3 / dt)
+
     test_cases = {
         "'A' 패턴만 제시": [pA_spikes],
         "'B' 패턴만 제시": [pB_spikes],
@@ -185,13 +211,17 @@ def run_verification(neurons, neuron_C, patterns, dt):
     for n in neurons: n.input_learning_rate_gpu = cp.float64(0.0)
     neuron_C.input_learning_rate_gpu = cp.float64(0.0)
 
-    # 뉴런 A가 패턴 A 전문가, 뉴런 B가 패턴 B 전문가라고 가정
-    # 초기 시드값에 따라 역할이 바뀔 수 있으므로, 학습 후 확인 필요
-    neuron_A_expert_for_A = _to_numpy(neurons[0].input_weights)[patterns['pA_aff']].mean() > _to_numpy(neurons[1].input_weights)[patterns['pA_aff']].mean()
-    neuron_A_idx = 0 if neuron_A_expert_for_A else 1
-    neuron_B_idx = 1 if neuron_A_expert_for_A else 0
+    # 학습 후, 각 패턴에 가장 강하게 연결된 '대표 전문가' 뉴런을 동적으로 찾음
+    weights_A = np.array([_to_numpy(n.input_weights)[patterns['pA_aff']].mean() for n in neurons])
+    weights_B = np.array([_to_numpy(n.input_weights)[patterns['pB_aff']].mean() for n in neurons])
+    
+    neuron_A_idx = np.argmax(weights_A)
+    neuron_B_idx = np.argmax(weights_B)
 
-    print(f"(정보) 뉴런 {neuron_A_idx+1}이(가) 패턴 A 전문가로, 뉴런 {neuron_B_idx+1}이(가) 패턴 B 전문가로 결정되었습니다.")
+    print(f"(정보) 패턴 A 대표 전문가: 뉴런 {neuron_A_idx+1}")
+    print(f"(정보) 패턴 B 대표 전문가: 뉴런 {neuron_B_idx+1}")
+    if neuron_A_idx == neuron_B_idx:
+        print("(경고) 패턴 A와 B의 전문가 뉴런이 동일합니다. 역할 분담에 실패했을 수 있습니다.")
 
 
     for case_name, sequence in test_cases.items():
@@ -210,17 +240,32 @@ def run_verification(neurons, neuron_C, patterns, dt):
         for i, pattern_spikes in enumerate(sequence):
             start_step = i * (p_steps + sequence_gap_steps)
             end_step = start_step + p_steps
+            inhibition_timers = np.zeros(num_neurons_L1)
             for step in range(start_step, end_step):
                 presynaptic_spikes = np.zeros(num_afferents)
                 for t, afferent_idx in pattern_spikes:
                     if (step - start_step) == t:
                         presynaptic_spikes[afferent_idx] = 1.0
                 
-                for n_idx, neuron in enumerate(neurons):
-                    result = neuron.step(presynaptic_spikes, external_current=base_current)
+                inhibition_timers -= 1
+                winner_found = False
+
+                neuron_indices = list(range(num_neurons_L1))
+                np.random.shuffle(neuron_indices)
+
+                for n_idx in neuron_indices:
+                    neuron = neurons[n_idx]
+                    if winner_found: continue
+                    current = inhibition_current if inhibition_timers[n_idx] > 0 else base_current
+                    result = neuron.step(presynaptic_spikes, external_current=current)
                     if result.axon_spike > 0:
+                        winner_found = True
                         L1_outputs[step, n_idx] = 1.0
                         L1_spike_counts[n_idx] += 1
+                        # Add inhibition to other neurons for verification
+                        for other_idx in range(num_neurons_L1):
+                            if n_idx != other_idx:
+                                inhibition_timers[other_idx] = inhibition_duration_steps
         
         for step in range(total_steps):
             result = neuron_C.step(L1_outputs[step, :], external_current=base_current)
@@ -228,23 +273,22 @@ def run_verification(neurons, neuron_C, patterns, dt):
                 L2_spike_count += 1
 
         print("  [응답]")
-        print(f"    - 'A' 전문가 뉴런({neuron_A_idx+1}) 발화 횟수: {int(L1_spike_counts[neuron_A_idx])}")
-        print(f"    - 'B' 전문가 뉴런({neuron_B_idx+1}) 발화 횟수: {int(L1_spike_counts[neuron_B_idx])}")
+        print(f"    - 'A' 대표 전문가({neuron_A_idx+1}) 발화 횟수: {int(L1_spike_counts[neuron_A_idx])}")
+        print(f"    - 'B' 대표 전문가({neuron_B_idx+1}) 발화 횟수: {int(L1_spike_counts[neuron_B_idx])}")
+        print(f"    - 전체 1계층 발화 합계: {int(np.sum(L1_spike_counts))}")
         print(f"    - '문맥' 전문가 뉴런(C) 발화 횟수: {int(L2_spike_count)}")
 
 
 if __name__ == "__main__":
+    np.random.seed(42) # 재현성을 위한 마스터 시드 설정
     if not GPU_AVAILABLE:
         print("계층적 학습 테스트: CUDA 장치가 없어 건너뜁니다.")
     else:
         # 1. 환경 설정
         num_afferents_L1 = 20
-        num_afferents_L2 = 2
+        num_neurons_L1 = 10  # 뉴런 개수 대폭 확장
+        num_afferents_L2 = num_neurons_L1 # 2계층 입력은 1계층 뉴런 수와 동일
         dt = 1e-4
-        
-        neurons_L1 = [create_base_neuron(num_afferents_L1, dt, 42), 
-                      create_base_neuron(num_afferents_L1, dt, 1337)]
-        neuron_L2 = create_base_neuron(num_afferents_L2, dt, 777, input_lr=0.02)
         
         pA_spikes, pB_spikes, p_steps, pA_aff, pB_aff = define_patterns(num_afferents_L1, dt)
         pattern_data = {
@@ -252,9 +296,15 @@ if __name__ == "__main__":
             'pA_aff': pA_aff, 'pB_aff': pB_aff
         }
 
+        # 1계층 뉴런 (경쟁 학습) - 고유한 시드로 개성 부여
+        neurons_L1 = [create_base_neuron(num_afferents_L1, dt, 42 + i) for i in range(num_neurons_L1)]
+        
+        # 2계층 뉴런 (문맥 학습)
+        neuron_L2 = create_base_neuron(num_afferents_L2, dt, 777, input_lr=0.02)
+
         # 2. 학습 실행 (단계별 분리)
-        run_learning_L1(neurons_L1, pattern_data, trials=200, dt=dt)
-        run_learning_L2(neurons_L1, neuron_L2, pattern_data, trials=200, dt=dt)
+        run_learning_L1(neurons_L1, pattern_data, trials=50, dt=dt)
+        run_learning_L2(neurons_L1, neuron_L2, pattern_data, trials=50, dt=dt)
 
         # 3. 검증 실행
         run_verification(neurons_L1, neuron_L2, pattern_data, dt)
