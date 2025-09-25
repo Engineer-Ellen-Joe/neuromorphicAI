@@ -31,6 +31,7 @@ try:
     _STDP_LAYER_KERNEL = cp.RawKernel(_cuda_source, 'stdp_update_layer')
     _PROPAGATE_LAYER_KERNEL = cp.RawKernel(_cuda_source, 'propagate_branch_layer')
     _LTP_LAYER_KERNEL = cp.RawKernel(_cuda_source, 'bcm_ltp_layer')
+    _COMPETITIVE_STEP_KERNEL = cp.RawKernel(_cuda_source, 'competitive_step_kernel')
 except FileNotFoundError:
     _cuda_source = None
     _STDP_LAYER_KERNEL = None
@@ -383,6 +384,128 @@ class PyramidalLayer:
                     np.int32(self.num_branches),
                 ),
             )
+
+        return StepResult(
+            soma_potentials=self.membrane_potential.copy(),
+            ais_activations=ais_activation.copy(),
+            axon_spikes=axon_spikes.copy(),
+            branch_currents=self.branch_currents.copy(),
+            postsynaptic_drive=postsynaptic_drive.copy(),
+            postsynaptic_potentials=self.postsynaptic_potentials.copy(),
+        )
+
+    def step_competitive(
+        self,
+        presynaptic_spikes: cp.ndarray,
+        *,
+        external_currents: cp.ndarray,
+        inhibition_current: float,
+        dt: Optional[float] = None,
+    ) -> StepResult:
+        """Performs a single competitive step using the integrated CUDA kernel."""
+        if _COMPETITIVE_STEP_KERNEL is None:
+            raise RuntimeError("Competitive step kernel not available. Check CUDA setup.")
+
+        if dt is not None:
+            self._update_time_step(dt)
+
+        # 1. Update presynaptic traces (STDP)
+        self.pre_trace = _TRACE_INTEGRATOR_LAYER(self.pre_trace, presynaptic_spikes, self.pre_decay)
+
+        # 2. Calculate total synaptic drive
+        synaptic_drive = cp.dot(self.input_weights, presynaptic_spikes)
+
+        # 3. Call the competitive step kernel
+        winner_idx_global = cp.array([-1], dtype=cp.int32)
+        axon_spikes = cp.zeros(self.num_neurons, dtype=DTYPE)
+        
+        threads_per_block = 256
+        grid_size = (self.num_neurons + threads_per_block - 1) // threads_per_block
+
+        _COMPETITIVE_STEP_KERNEL(
+            (grid_size,), (threads_per_block,),
+            (
+                self.membrane_potential, self.refractory_timers, axon_spikes,
+                synaptic_drive, external_currents,
+                self._dt_gpu, self._leak_potential_gpu, self._reset_potential_gpu,
+                DTYPE(self.ais_threshold), DTYPE(self.ais_slope), DTYPE(self.ais_activation_gate),
+                DTYPE(self.refractory_period), DTYPE(self.membrane_time_constant),
+                DTYPE(self.membrane_capacitance), DTYPE(inhibition_current),
+                winner_idx_global,
+                np.int32(self.num_neurons)
+            )
+        )
+
+        # --- Plasticity and Postsynaptic calculations (same as original step) ---
+        # This part is duplicated from the `step` method for now.
+        
+        # 7. Update post_trace (STDP)
+        post_signal = cp.broadcast_to(axon_spikes[:, None], self.post_trace.shape)
+        self.post_trace = _TRACE_INTEGRATOR_LAYER(self.post_trace, post_signal, self.post_decay)
+
+        # 8. Call STDP CUDA Kernel
+        if _STDP_LAYER_KERNEL is not None and self.input_learning_rate > 0:
+            threads_per_block_stdp = (16, 16)
+            grid_x = (self.num_afferents + threads_per_block_stdp[0] - 1) // threads_per_block_stdp[0]
+            grid_y = (self.num_neurons + threads_per_block_stdp[1] - 1) // threads_per_block_stdp[1]
+            grid = (grid_x, grid_y)
+            
+            _STDP_LAYER_KERNEL(
+                grid, threads_per_block_stdp,
+                (
+                    self.input_weights, self.pre_trace, self.post_trace,
+                    presynaptic_spikes, axon_spikes, DTYPE(self.stdp_a_plus), DTYPE(self.stdp_a_minus),
+                    self.input_weight_bounds[0], self.input_weight_bounds[1],
+                    DTYPE(self.input_learning_rate), np.int32(self.num_neurons), np.int32(self.num_afferents),
+                ),
+            )
+
+        # 9. Axon Branch Propagation
+        if _PROPAGATE_LAYER_KERNEL is not None:
+            threads_per_block_prop = (16, 16)
+            grid_x = (self.num_branches + threads_per_block_prop[0] - 1) // threads_per_block_prop[0]
+            grid_y = (self.num_neurons + threads_per_block_prop[1] - 1) // threads_per_block_prop[1]
+            grid = (grid_x, grid_y)
+
+            _PROPAGATE_LAYER_KERNEL(
+                grid, threads_per_block_prop,
+                (
+                    axon_spikes, DTYPE(self.axon_spike_current), DTYPE(self.conduction_threshold),
+                    self.safety_factors, self.branch_currents,
+                    np.int32(self.num_neurons), np.int32(self.num_branches),
+                ),
+            )
+
+        # 10. Postsynaptic drive and potential updates
+        postsynaptic_drive = self.branch_currents * self.output_weights
+        self.postsynaptic_activity_trace = _TRACE_INTEGRATOR_LAYER(
+            self.postsynaptic_activity_trace, postsynaptic_drive, self.postsynaptic_decay
+        )
+        self.postsynaptic_potentials = _DENDRITE_KERNEL_LAYER(
+            self.postsynaptic_potentials, postsynaptic_drive, self._dt_gpu,
+            DTYPE(1.0 / self.dendritic_time_constant), DTYPE(1.0 / self.dendritic_capacitance),
+        )
+
+        # 11. BCM LTP Kernel
+        if _LTP_LAYER_KERNEL is not None and self.output_learning_rate > 0:
+            threads_per_block_bcm = (16, 16)
+            grid_x = (self.num_branches + threads_per_block_bcm[0] - 1) // threads_per_block_bcm[0]
+            grid_y = (self.num_neurons + threads_per_block_bcm[1] - 1) // threads_per_block_bcm[1]
+            grid = (grid_x, grid_y)
+
+            _LTP_LAYER_KERNEL(
+                grid, threads_per_block_bcm,
+                (
+                    self.bcm_theta, self.output_weights, self.postsynaptic_activity_trace,
+                    DTYPE(1.0 / self.bcm_tau), DTYPE(self.output_learning_rate),
+                    self.output_weight_bounds[0], self.output_weight_bounds[1],
+                    self._dt_gpu, np.int32(self.num_neurons), np.int32(self.num_branches),
+                ),
+            )
+
+        # Recalculate AIS activation for reporting, as the kernel doesn't return it.
+        ais_voltage = self.membrane_potential + self.ais_bias
+        ais_activation = 1.0 / (1.0 + cp.exp(-(ais_voltage - self.ais_threshold) / self.ais_slope))
 
         return StepResult(
             soma_potentials=self.membrane_potential.copy(),
