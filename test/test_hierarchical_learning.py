@@ -20,6 +20,7 @@ import sys
 import os
 import numpy as np
 import cupy as cp
+import matplotlib.pyplot as plt
 
 # 프로젝트 루트를 경로에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -27,6 +28,67 @@ from src.pyramidal_layer import PyramidalLayer, DTYPE
 
 # --- 기본 설정 ---
 GPU_AVAILABLE = cp.cuda.is_available()
+
+def verify_and_visualize_layer1(layer, patterns, dt, base_current, inhibition_current):
+    """학습된 1계층의 역할 분담 결과를 검증하고 시각화합니다."""
+    print("\n--- 중간 검증: Layer 1 역할 분담 확인 ---")
+    pA_spikes, pB_spikes, p_steps = patterns['pA_spikes'], patterns['pB_spikes'], patterns['p_steps']
+    
+    spike_counts = cp.zeros((2, layer.num_neurons), dtype=cp.int32) # 0: Pattern A, 1: Pattern B
+    test_patterns = [pA_spikes, pB_spikes]
+    pattern_names = ["Pattern A", "Pattern B"]
+    
+    base_current_gpu = cp.full(layer.num_neurons, 0.2, dtype=DTYPE) # 검증을 위해 탐침 전류를 미세 조정
+
+    # 학습 비활성화 상태에서 각 패턴에 대한 반응 테스트
+    original_lr = layer.input_learning_rate
+    layer.input_learning_rate = 0.0
+
+    for i, pattern_spikes in enumerate(test_patterns):
+        layer.reset_state()
+        for _ in range(5): # 5번 반복하여 평균적인 반응 확인
+            for step in range(p_steps):
+                presynaptic_spikes = cp.zeros(layer.num_afferents, dtype=DTYPE)
+                for t, afferent_idx in pattern_spikes:
+                    if step == t:
+                        presynaptic_spikes[afferent_idx] = 1.0
+                
+                result = layer.step_competitive(
+                    presynaptic_spikes,
+                    external_currents=base_current_gpu,
+                    inhibition_current=inhibition_current
+                )
+                spike_counts[i] += (result.axon_spikes > 0).astype(cp.int32)
+
+    # 학습률 원상복구
+    layer.input_learning_rate = original_lr
+
+    # --- 시각화 ---
+    spike_counts_cpu = spike_counts.get()
+    neuron_indices = np.arange(layer.num_neurons)
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bar_width = 0.4
+    
+    # A-specialists should be the first half, B-specialists the second half
+    colors_A = ['blue'] * (layer.num_neurons // 2) + ['lightgray'] * (layer.num_neurons - layer.num_neurons // 2)
+    colors_B = ['lightgray'] * (layer.num_neurons // 2) + ['red'] * (layer.num_neurons - layer.num_neurons // 2)
+
+    ax.bar(neuron_indices - bar_width/2, spike_counts_cpu[0], bar_width, label='Response to Pattern A', color=colors_A)
+    ax.bar(neuron_indices + bar_width/2, spike_counts_cpu[1], bar_width, label='Response to Pattern B', color=colors_B)
+
+    ax.set_xlabel('Neuron Index')
+    ax.set_ylabel('Total Spikes (5 trials)')
+    ax.set_title('Layer 1 Neuron Specialization Verification')
+    ax.set_xticks(neuron_indices)
+    ax.legend()
+    fig.tight_layout()
+    
+    save_path = os.path.join(os.path.dirname(__file__), 'l1_specialization_check.png')
+    plt.savefig(save_path)
+    print(f"  - 검증 그래프 저장 완료: {save_path}")
+    plt.close(fig)
+
 
 def define_patterns(num_afferents, dt):
     """학습에 사용할 두 개의 시공간 패턴을 정의합니다."""
@@ -225,6 +287,7 @@ def test_hierarchical_learning():
 
     # --- 학습 및 검증 실행 ---
     train_layer1(layer1, patterns, trials=200, dt=dt, base_current=base_current, inhibition_current=inhibition_current)
+    verify_and_visualize_layer1(layer1, patterns, dt, base_current, inhibition_current)
     train_layer2(layer1, layer2, patterns, trials=300, dt=dt, base_current=base_current)
     run_verification(layer1, layer2, patterns, dt, base_current)
 

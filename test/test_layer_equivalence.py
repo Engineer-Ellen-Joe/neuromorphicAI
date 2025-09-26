@@ -15,7 +15,7 @@ import pytest
 
 # Add project root to path to import source modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.pyramidal_neuron import PyramidalNeuron
+from src.expansion.pyramidal_neuron import PyramidalNeuron
 from src.pyramidal_layer import PyramidalLayer
 
 # --- Configuration ---
