@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/bullet",
+                "/usr/",
+                "C:/msys64/ucrt64/include",
+                "C:/VulkanSDK/1.4.313.1/Include",
+                "C:/Dev/2025/littleVulkanGameEngine",
+                "C:/msys64/ucrt64/include/bullet"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
