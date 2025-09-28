@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 # 프로젝트 루트를 경로에 추가하여 src 모듈을 임포트할 수 있도록 함
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.pyramidal_neuron import PyramidalNeuron, StepResult
+from src.pyramidal_layer import PyramidalLayer, StepResult, DTYPE
 
 # GPU 사용 가능 여부 확인
 try:
@@ -48,7 +48,7 @@ def _scalar(array) -> float:
 
 def debug_soma_dynamics_and_spiking():
     """
-    막 전위, AIS 활성화 및 스파이크 발생을 디버깅합니다.
+    PyramidalLayer의 막 전위, AIS 활성화 및 스파이크 발생을 디버깅합니다.
     일정 시간 동안 외부 전류를 주입하여 뉴런의 반응을 시뮬레이션하고,
     주요 상태 변수들의 변화를 그래프로 확인합니다.
     """
@@ -56,24 +56,27 @@ def debug_soma_dynamics_and_spiking():
         print("Soma Dynamics Test: CUDA 장치가 없어 건너뜁니다.")
         return
 
-    print("막 전위 및 스파이크 발생 디버깅 시작...")
-    neuron = PyramidalNeuron(
+    print("PyramidalLayer 막 전위 및 스파이크 발생 디버깅 시작...")
+    
+    # Use PyramidalLayer with new scaled units
+    layer = PyramidalLayer(
+        num_neurons=1,
         num_afferents=1,
         num_branches=1,
-        dt=1e-4,
-        membrane_time_constant=10e-3,
-        ais_threshold=-55e-3,
-        reset_potential=-70e-3,
-        leak_potential=-70e-3,
-        refractory_period=5e-3,
+        dt=0.1,  # ms
+        membrane_time_constant=10.0, # ms
+        ais_threshold=-55.0, # mV
+        reset_potential=-70.0, # mV
+        leak_potential=-70.0, # mV
+        refractory_period=5.0, # ms
     )
 
-    duration = 100e-3  # 시뮬레이션 시간
-    num_steps = int(duration / neuron.dt)
-    time = np.arange(num_steps) * neuron.dt
+    duration = 100.0  # 시뮬레이션 시간 (ms)
+    num_steps = int(duration / layer.dt)
+    time = np.arange(num_steps) * layer.dt
 
-    # 전체 시뮬레이션 시간 동안 외부 전류 주입
-    external_current_val = 500e-12  # 500 pA (연속 발화를 유도하기 위해 값 조정)
+    # 전체 시뮬레이션 시간 동안 외부 전류 주입 (nA 단위)
+    external_current_val = 0.5  # 0.5 nA (500 pA)
     external_current_stimulus = np.full(num_steps, external_current_val)
 
     # 시뮬레이션 데이터 기록
@@ -81,38 +84,43 @@ def debug_soma_dynamics_and_spiking():
     ais_activations = np.zeros(num_steps)
     spikes = np.zeros(num_steps)
 
+    # presynaptic_spikes를 미리 cp.array로 생성
+    presynaptic_spikes_gpu = cp.array([0.0], dtype=DTYPE)
+
     for i in range(num_steps):
-        result = neuron.step(
-            presynaptic_spikes=[0.0],
-            external_current=external_current_stimulus[i]
+        current_ext = cp.array([external_current_stimulus[i]], dtype=DTYPE)
+        result = layer.step(
+            presynaptic_spikes=presynaptic_spikes_gpu,
+            external_currents=current_ext
         )
-        potentials[i] = result.soma_potential
-        ais_activations[i] = result.ais_activation
-        spikes[i] = result.axon_spike
+        potentials[i] = _scalar(result.soma_potentials)
+        ais_activations[i] = _scalar(result.ais_activations)
+        spikes[i] = _scalar(result.axon_spikes)
 
     # 결과 시각화
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-    fig.suptitle("막 전위, AIS 활성화 및 스파이크 발생 디버깅", fontsize=16)
+    fig.suptitle("PyramidalLayer (float32) 막 전위, AIS 활성화 및 스파이크 발생 디버깅", fontsize=16)
 
     # 1. 막 전위
-    ax1.plot(time * 1000, potentials * 1000, label="Soma Potential (mV)")
-    ax1.axhline(neuron.ais_threshold * 1000, color='r', linestyle='--', label="AIS Threshold (mV)")
-    ax1.axhline(neuron.reset_potential * 1000, color='g', linestyle='--', label="Reset Potential (mV)")
+    ax1.plot(time, potentials, label="Soma Potential (mV)")
+    ax1.axhline(layer.ais_threshold, color='r', linestyle='--', label="AIS Threshold (mV)")
+    ax1.axhline(layer.reset_potential, color='g', linestyle='--', label="Reset Potential (mV)")
     ax1.set_ylabel("전위 (mV)")
     ax1.legend()
     ax1.grid(True)
 
     # 2. AIS 활성화
-    ax2.plot(time * 1000, ais_activations, label="AIS Activation", color='orange')
-    ax2.axhline(neuron.ais_activation_gate, color='r', linestyle='--', label="Activation Gate")
+    ax2.plot(time, ais_activations, label="AIS Activation", color='orange')
+    ax2.axhline(layer.ais_activation_gate, color='r', linestyle='--', label="Activation Gate")
     ax2.set_ylabel("활성화 수준")
     ax2.legend()
     ax2.grid(True)
 
     # 3. 스파이크 및 외부 자극
-    ax3.plot(time * 1000, spikes, 'ro', markersize=8, label="Axon Spike")
+    ax3.plot(time, spikes, 'ro', markersize=8, label="Axon Spike")
     ax3_twin = ax3.twinx()
-    ax3_twin.plot(time * 1000, external_current_stimulus * 1e12, 'b--', alpha=0.5, label="External Current (pA)")
+    # pA로 표시하기 위해 nA 값에 1000을 곱함
+    ax3_twin.plot(time, external_current_stimulus * 1000, 'b--', alpha=0.5, label="External Current (pA)")
     ax3.set_xlabel("시간 (ms)")
     ax3.set_ylabel("스파이크 (1=발생)")
     ax3_twin.set_ylabel("외부 전류 (pA)")
@@ -291,10 +299,13 @@ if __name__ == "__main__":
     if not GPU_AVAILABLE:
         print("경고: CUDA 지원 GPU를 찾을 수 없습니다. 모든 테스트를 건너뜁니다.")
     else:
-        # 각 디버깅 함수를 순차적으로 호출
+        # For now, only run the soma dynamics test for the new layer
         debug_soma_dynamics_and_spiking()
-        debug_stdp_weight_change()
-        debug_bcm_ltp_dynamics()
+        # debug_stdp_weight_change()
+        # debug_bcm_ltp_dynamics()
 
-        # 모든 그래프를 화면에 표시
-        plt.show()
+        # Save the plot to a file instead of showing it
+        output_filename = "soma_dynamics_float32.png"
+        plt.savefig(output_filename)
+        print(f"Plot saved to {os.path.abspath(output_filename)}")
+        plt.close()
