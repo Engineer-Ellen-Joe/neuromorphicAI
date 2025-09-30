@@ -2,11 +2,9 @@
 
 #include "lve_window.hpp"
 
-// std
+// std lib headers
 #include <string>
 #include <vector>
-#include <memory>
-#include <array> // Ensure this is included
 
 namespace lve {
 
@@ -41,21 +39,14 @@ class LveDevice {
   LveDevice(LveDevice &&) = delete;
   LveDevice &operator=(LveDevice &&) = delete;
 
-    VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
-
-    VkCommandPool getCommandPool() { return commandPool; }
+  VkCommandPool getCommandPool() { return commandPool; }
   VkDevice device() { return device_; }
   VkSurfaceKHR surface() { return surface_; }
-  VkQueue graphicsQueue() { return graphicsQueue_; } // Public getter
-  VkQueue presentQueue() { return presentQueue_; }   // Public getter
-
-  std::array<uint8_t, VK_UUID_SIZE> vulkanDeviceUUID; // Public member
-
-  // Getter for Vulkan Device UUID
-  const std::array<uint8_t, VK_UUID_SIZE>& getVulkanDeviceUUID() const { return vulkanDeviceUUID; } // Public getter
+  VkQueue graphicsQueue() { return graphicsQueue_; }
+  VkQueue presentQueue() { return presentQueue_; }
 
   SwapChainSupportDetails getSwapChainSupport() { return querySwapChainSupport(physicalDevice); }
-  uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkExternalMemoryHandleTypeFlagBits handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM);
+  uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
   QueueFamilyIndices findPhysicalQueueFamilies() { return findQueueFamilies(physicalDevice); }
   VkFormat findSupportedFormat(
       const std::vector<VkFormat> &candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -89,8 +80,6 @@ class LveDevice {
 
   VkPhysicalDeviceProperties properties;
 
-    PFN_vkGetMemoryWin32HandleKHR vkGetMemoryWin32HandleKHR = nullptr;
-
  private:
   void createInstance();
   void setupDebugMessenger();
@@ -117,17 +106,11 @@ class LveDevice {
 
   VkDevice device_;
   VkSurfaceKHR surface_;
-  VkQueue graphicsQueue_;  // Private member
-  VkQueue presentQueue_;   // Private member
+  VkQueue graphicsQueue_;
+  VkQueue presentQueue_;
 
   const std::vector<const char *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
-  const std::vector<const char *> deviceExtensions = {
-      VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-      VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-      VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
-      VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-      VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME
-  };
+  const std::vector<const char *> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 };
 
 }  // namespace lve

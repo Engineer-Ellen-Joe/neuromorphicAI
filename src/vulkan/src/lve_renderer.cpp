@@ -89,11 +89,9 @@ namespace lve {
       lveWindow.resetWindowResizedFlag();
       recreateSwapChain();
     }
-    if (result != VK_SUCCESS) {
+    else if (result != VK_SUCCESS) {
       throw std::runtime_error("failed to present swap chain image!");
     }
-
-    vkDeviceWaitIdle(lveDevice.device()); // Wait for GPU to finish before starting next frame
 
     isFrameStarted = false;
     currentFrameIndex = (currentFrameIndex + 1) % LveSwapChain::MAX_FRAMES_IN_FLIGHT;

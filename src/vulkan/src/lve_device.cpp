@@ -118,24 +118,11 @@ void LveDevice::pickPhysicalDevice() {
   std::vector<VkPhysicalDevice> devices(deviceCount);
   vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-  // Prefer NVIDIA GPU for CUDA interop
   for (const auto &device : devices) {
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(device, &deviceProperties);
-    if (isDeviceSuitable(device) && std::string(deviceProperties.deviceName).find("NVIDIA") != std::string::npos) {
+    if (isDeviceSuitable(device)) {
       physicalDevice = device;
       break;
     }
-  }
-
-  // If no NVIDIA GPU is found, fall back to the first suitable device
-  if (physicalDevice == VK_NULL_HANDLE) {
-      for (const auto &device : devices) {
-          if (isDeviceSuitable(device)) {
-              physicalDevice = device;
-              break;
-          }
-      }
   }
 
   if (physicalDevice == VK_NULL_HANDLE) {
@@ -165,20 +152,8 @@ void LveDevice::createLogicalDevice() {
   VkPhysicalDeviceFeatures deviceFeatures = {};
   deviceFeatures.samplerAnisotropy = VK_TRUE;
 
-  // -- For CUDA Interop --
-  VkPhysicalDeviceIDProperties physicalDeviceIDProperties{};
-  physicalDeviceIDProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
-
-  VkPhysicalDeviceProperties2 physicalDeviceProperties2{};
-  physicalDeviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-  physicalDeviceProperties2.pNext = &physicalDeviceIDProperties;
-  vkGetPhysicalDeviceProperties2(physicalDevice, &physicalDeviceProperties2);
-  std::copy(std::begin(physicalDeviceIDProperties.deviceUUID), std::end(physicalDeviceIDProperties.deviceUUID), std::begin(vulkanDeviceUUID));
-  // -- End CUDA Interop --
-
   VkDeviceCreateInfo createInfo = {};
   createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-  // createInfo.pNext = &physicalDeviceIDProperties; // This was incorrect and caused validation errors
 
   createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
   createInfo.pQueueCreateInfos = queueCreateInfos.data();
@@ -198,12 +173,6 @@ void LveDevice::createLogicalDevice() {
 
   if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device_) != VK_SUCCESS) {
     throw std::runtime_error("failed to create logical device!");
-  }
-
-  // Load the function pointer for vkGetMemoryWin32HandleKHR
-  vkGetMemoryWin32HandleKHR = (PFN_vkGetMemoryWin32HandleKHR) vkGetInstanceProcAddr(instance, "vkGetMemoryWin32HandleKHR");
-  if (!vkGetMemoryWin32HandleKHR) {
-      throw std::runtime_error("Failed to get function pointer for vkGetMemoryWin32HandleKHR");
   }
 
   vkGetDeviceQueue(device_, indices.graphicsFamily, 0, &graphicsQueue_);
@@ -421,45 +390,16 @@ VkFormat LveDevice::findSupportedFormat(
   throw std::runtime_error("failed to find supported format!");
 }
 
-uint32_t LveDevice::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkExternalMemoryHandleTypeFlagBits handleType) {
-  std::cout << "[LveDevice] findMemoryType: typeFilter=" << typeFilter << ", properties=" << properties << ", handleType=" << handleType << std::endl;
-
-  VkPhysicalDeviceMemoryProperties2 memProperties2{};
-  memProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-  vkGetPhysicalDeviceMemoryProperties2(physicalDevice, &memProperties2);
-
-  for (uint32_t i = 0; i < memProperties2.memoryProperties.memoryTypeCount; i++) {
-    std::cout << "  Memory Type " << i << ": propertyFlags=" << memProperties2.memoryProperties.memoryTypes[i].propertyFlags << std::endl;
+uint32_t LveDevice::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
     if ((typeFilter & (1 << i)) &&
-        (memProperties2.memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-      
-      // If a specific handleType is provided, check for external memory import capabilities
-      if (handleType != VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM) {
-          VkPhysicalDeviceExternalBufferInfo externalBufferInfo{};
-          externalBufferInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO;
-          externalBufferInfo.handleType = handleType;
-          externalBufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; // Assuming storage buffer for neuron data
-
-          VkExternalBufferProperties externalBufferProperties{};
-          externalBufferProperties.sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES;
-          vkGetPhysicalDeviceExternalBufferProperties(physicalDevice, &externalBufferInfo, &externalBufferProperties);
-
-          std::cout << "    External Buffer Properties for handleType " << handleType << ":\n";
-          std::cout << "      externalMemoryFeatures: " << externalBufferProperties.externalMemoryProperties.externalMemoryFeatures << "\n";
-          std::cout << "      compatibleHandleTypes: " << externalBufferProperties.externalMemoryProperties.compatibleHandleTypes << std::endl;
-
-          if ((externalBufferProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
-              (externalBufferProperties.externalMemoryProperties.compatibleHandleTypes & handleType)) {
-              std::cout << "[LveDevice] Found suitable memory type " << i << " for external import." << std::endl;
-              return i;
-          }
-      } else { // No specific handleType, just return the first match
-          std::cout << "[LveDevice] Found suitable memory type " << i << " (no external import check)." << std::endl;
-          return i;
-      }
+        (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
     }
   }
-  std::cout << "[LveDevice] Failed to find suitable memory type!" << std::endl;
+
   throw std::runtime_error("failed to find suitable memory type!");
 }
 

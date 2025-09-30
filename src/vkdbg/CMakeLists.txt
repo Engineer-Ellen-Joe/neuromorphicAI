@@ -1,28 +1,28 @@
-cmake_minimum_required(VERSION 3.18)
-project(vkdbg)
+cmake_minimum_required(VERSION 3.11.0)
 
-# Add this line to define the macro for all targets
-add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
+project(vkdbg CXX)
 
-find_package(pybind11 CONFIG REQUIRED)
-find_package(Vulkan REQUIRED)
-find_package(glfw3 REQUIRED)
+# Add the vulkan_engine library from the sibling directory
+add_subdirectory(../vulkan vulkan_engine_build)
 
-# Add include directories with absolute path
-include_directories("C:/Dev/2025/EllenProject/src/vulkan/src")
+# Gather all source files for the vkdbg executable
+file(GLOB SOURCES "*.cpp")
+file(GLOB SYSTEM_SOURCES "systems/*.cpp")
+list(APPEND SOURCES ${SYSTEM_SOURCES})
 
-# --- Add Lve source files with absolute path ---
-set(LVE_SOURCES
-    "C:/Dev/2025/EllenProject/src/vulkan/src/lve_window.cpp"
-    "C:/Dev/2025/EllenProject/src/vulkan/src/lve_device.cpp"
-)
+# Create the executable
+add_executable(vkdbg ${SOURCES})
 
-# --- vkdbg module ---
-pybind11_add_module(vkdbg vkdbg.cpp)
-target_link_libraries(vkdbg PRIVATE Vulkan::Vulkan)
-set_target_properties(vkdbg PROPERTIES LIBRARY_OUTPUT_DIRECTORY "C:/Dev/2025/EllenProject/python")
+# Link the executable against the vulkan_engine
+# The engine handles linking its own dependencies like Vulkan, GLFW, etc.
+target_link_libraries(vkdbg PRIVATE vulkan_engine)
 
-# --- vulkan_setup module ---
-pybind11_add_module(vulkan_setup vulkan_setup.cpp ${LVE_SOURCES})
-target_link_libraries(vulkan_setup PRIVATE Vulkan::Vulkan glfw)
-set_target_properties(vulkan_setup PROPERTIES LIBRARY_OUTPUT_DIRECTORY "C:/Dev/2025/EllenProject/python")
+# Set the C++ standard
+target_compile_features(vkdbg PRIVATE cxx_std_17)
+
+# Add the current directory to the include path
+target_include_directories(vkdbg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Set the working directory for debugging in Visual Studio
+# This helps the executable find assets like shaders
+set_property(TARGET vkdbg PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")

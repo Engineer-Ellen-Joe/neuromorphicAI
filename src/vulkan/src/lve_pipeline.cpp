@@ -1,5 +1,7 @@
 #include "lve_pipeline.hpp"
 
+#include "lve_model.hpp"
+
 // std
 #include <cassert>
 #include <fstream>
@@ -204,9 +206,8 @@ void LvePipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo) {
       static_cast<uint32_t>(configInfo.dynamicStateEnables.size());
   configInfo.dynamicStateInfo.flags = 0;
 
-  // No vertex input for now, this will be a blank screen
-  configInfo.bindingDescriptions.clear();
-  configInfo.attributeDescriptions.clear();
+  configInfo.bindingDescriptions = LveModel::Vertex::getBindingDescriptions();
+  configInfo.attributeDescriptions = LveModel::Vertex::getAttributeDescriptions();
 }
 
 void LvePipeline::enableAlphaBlending(PipelineConfigInfo& configInfo){
