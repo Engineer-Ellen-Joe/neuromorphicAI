@@ -13,30 +13,18 @@ Simple2DRenderSystem::Simple2DRenderSystem(LveDevice& device, VkRenderPass rende
 
 Simple2DRenderSystem::~Simple2DRenderSystem() {
   vkDestroyPipelineLayout(lveDevice.device(), pipelineLayout, nullptr);
-  vkDestroyDescriptorSetLayout(lveDevice.device(), descriptorSetLayout, nullptr);
 }
 
 void Simple2DRenderSystem::createPipelineLayout() {
-  // Define a descriptor set layout for a single storage buffer
-  VkDescriptorSetLayoutBinding layoutBinding{};
-  layoutBinding.binding = 0;
-  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  layoutBinding.descriptorCount = 1;
-  layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  VkDescriptorSetLayoutCreateInfo layoutInfo{};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &layoutBinding;
-
-  if (vkCreateDescriptorSetLayout(lveDevice.device(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-      throw std::runtime_error("failed to create descriptor set layout!");
-  }
+  descriptorSetLayout = LveDescriptorSetLayout::Builder(lveDevice)
+      .addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+      .build();
 
   VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.setLayoutCount = 1; // We now have one layout
-  pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  auto setLayout = descriptorSetLayout->getDescriptorSetLayout();
+  pipelineLayoutInfo.pSetLayouts = &setLayout;
   pipelineLayoutInfo.pushConstantRangeCount = 0;
   pipelineLayoutInfo.pPushConstantRanges = nullptr;
   if (vkCreatePipelineLayout(lveDevice.device(), &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {

@@ -118,11 +118,24 @@ void LveDevice::pickPhysicalDevice() {
   std::vector<VkPhysicalDevice> devices(deviceCount);
   vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
+  // Prefer NVIDIA GPU for CUDA interop
   for (const auto &device : devices) {
-    if (isDeviceSuitable(device)) {
+    VkPhysicalDeviceProperties deviceProperties;
+    vkGetPhysicalDeviceProperties(device, &deviceProperties);
+    if (isDeviceSuitable(device) && std::string(deviceProperties.deviceName).find("NVIDIA") != std::string::npos) {
       physicalDevice = device;
       break;
     }
+  }
+
+  // If no NVIDIA GPU is found, fall back to the first suitable device
+  if (physicalDevice == VK_NULL_HANDLE) {
+      for (const auto &device : devices) {
+          if (isDeviceSuitable(device)) {
+              physicalDevice = device;
+              break;
+          }
+      }
   }
 
   if (physicalDevice == VK_NULL_HANDLE) {
@@ -165,7 +178,7 @@ void LveDevice::createLogicalDevice() {
 
   VkDeviceCreateInfo createInfo = {};
   createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-  createInfo.pNext = &physicalDeviceIDProperties; // Add ID properties to pNext chain
+  // createInfo.pNext = &physicalDeviceIDProperties; // This was incorrect and caused validation errors
 
   createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
   createInfo.pQueueCreateInfos = queueCreateInfos.data();
@@ -185,6 +198,12 @@ void LveDevice::createLogicalDevice() {
 
   if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device_) != VK_SUCCESS) {
     throw std::runtime_error("failed to create logical device!");
+  }
+
+  // Load the function pointer for vkGetMemoryWin32HandleKHR
+  vkGetMemoryWin32HandleKHR = (PFN_vkGetMemoryWin32HandleKHR) vkGetInstanceProcAddr(instance, "vkGetMemoryWin32HandleKHR");
+  if (!vkGetMemoryWin32HandleKHR) {
+      throw std::runtime_error("Failed to get function pointer for vkGetMemoryWin32HandleKHR");
   }
 
   vkGetDeviceQueue(device_, indices.graphicsFamily, 0, &graphicsQueue_);

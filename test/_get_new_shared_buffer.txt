@@ -1,0 +1,97 @@
+# replace the body of _get_new_shared_buffer with the code below
+import ctypes
+
+kernel32 = ctypes.windll.kernel32
+# helper to print last win32 error
+def _win32_errstr():
+    err = kernel32.GetLastError()
+    return f"GetLastError={err}"
+
+def _get_new_shared_buffer(self, name, original_buffer):
+    if not self.requester:
+        return
+
+    request_json = {
+        "name": name,
+        "size": int(original_buffer.nbytes),
+        "pid": os.getpid()
+    }
+    self.requester.send_string(json.dumps(request_json))
+    reply_str = self.requester.recv_string()
+    reply = json.loads(reply_str)
+
+    handle = int(reply["handle"])
+    size = int(reply["size"])
+    vulkan_uuid_str = reply.get("vulkan_uuid", None)
+
+    print(f"[GpuDebugSender] Received handle: {handle}, size: {size} for '{name}'")
+
+    # --- Quick Win32 handle validity check (should succeed if DuplicateHandle worked) ---
+    # GetHandleInformation returns nonzero on success
+    try:
+        GetHandleInformation = kernel32.GetHandleInformation
+        GetHandleInformation.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
+        flags = ctypes.c_uint(0)
+        ok = GetHandleInformation(ctypes.c_void_p(handle), ctypes.byref(flags))
+        print(f"[GpuDebugSender] GetHandleInformation returned {ok}, flags={flags.value}, {_win32_errstr()}")
+    except Exception as e:
+        print(f"[GpuDebugSender] GetHandleInformation raised: {e}")
+
+    # verify UUID quickly (existing code)
+    cuda_dev_id = original_buffer.device.id
+    cuda_dev_props = cp.cuda.runtime.getDeviceProperties(cuda_dev_id)
+    cuda_uuid_bytes = cuda_dev_props['uuid'][:16]
+    cuda_uuid_str_local = ''.join([f'{b:02x}' for b in cuda_uuid_bytes])
+    if vulkan_uuid_str and vulkan_uuid_str != cuda_uuid_str_local:
+        raise RuntimeError(f"Device UUID mismatch! Vulkan: {vulkan_uuid_str}, CUDA: {cuda_uuid_str_local}")
+
+    # Prepare mem handle desc struct (we'll try type=2 first, then 3)
+    mem_handle_desc = CUDA_EXTERNAL_MEMORY_HANDLE_DESC()
+    mem_handle_desc.size = size
+    mem_handle_desc.flags = 0
+
+    ext_mem = ctypes.c_void_p()
+    buffer_desc = CUDA_EXTERNAL_MEMORY_BUFFER_DESC()
+    buffer_desc.offset = 0
+    buffer_desc.size = size
+    buffer_desc.flags = 0
+
+    # Try both OPAQUE_WIN32 (2) and KMT (3) if needed
+    tried = []
+    for t in (2, 3):
+        mem_handle_desc.type = t
+        mem_handle_desc.handle = ctypes.c_void_p(handle)
+        tried.append(t)
+
+        # reset last error
+        kernel32.SetLastError(0)
+        result = cuImportExternalMemory(ext_mem, mem_handle_desc)
+        win_err = kernel32.GetLastError()
+        print(f"[GpuDebugSender] cuImportExternalMemory(type={t}) => result={result}, WinErr={win_err}")
+
+        if result == 0:  # CUDA_SUCCESS
+            print(f"[GpuDebugSender] cuImportExternalMemory succeeded with type={t}")
+            break
+    else:
+        # both types failed -> print diagnostics and raise
+        raise RuntimeError(f"cuImportExternalMemory failed for types {tried}: last result={result}, WinErr={win_err}")
+
+    # map buffer
+    dev_ptr = ctypes.c_void_p()
+    r2 = cuExternalMemoryGetMappedBuffer(dev_ptr, ext_mem, buffer_desc)
+    print(f"[GpuDebugSender] cuExternalMemoryGetMappedBuffer => {r2}")
+    if r2 != 0:
+        cuDestroyExternalMemory(ext_mem)
+        raise RuntimeError(f"cuExternalMemoryGetMappedBuffer failed with code {r2}")
+
+    # build CuPy memory wrapper
+    unowned_mem = cp.cuda.UnownedMemory(dev_ptr.value, size, None)
+    mem_ptr = cp.cuda.MemoryPointer(unowned_mem, 0)
+    shared_array = cp.ndarray(shape=original_buffer.shape, dtype=original_buffer.dtype, memptr=mem_ptr)
+
+    self.shared_buffers[name] = {
+        "ext_mem": ext_mem,
+        "dev_ptr": dev_ptr,
+        "array": shared_array
+    }
+    print(f"[GpuDebugSender] Successfully created and mapped shared buffer '{name}'.")

@@ -89,6 +89,8 @@ class LveDevice {
 
   VkPhysicalDeviceProperties properties;
 
+    PFN_vkGetMemoryWin32HandleKHR vkGetMemoryWin32HandleKHR = nullptr;
+
  private:
   void createInstance();
   void setupDebugMessenger();

@@ -2,6 +2,7 @@
 
 #include "../lve_device.hpp"
 #include "../lve_pipeline.hpp"
+#include "../lve_descriptors.hpp"
 
 // std
 #include <memory>
@@ -17,7 +18,7 @@ namespace lve {
 
     void render(VkCommandBuffer commandBuffer, VkDescriptorSet descriptorSet, uint32_t numNeurons);
 
-    VkDescriptorSetLayout const& getDescriptorSetLayout() const { return descriptorSetLayout; }
+    LveDescriptorSetLayout& getDescriptorSetLayout() const { return *descriptorSetLayout; }
 
   private:
     void createPipelineLayout();
@@ -27,6 +28,6 @@ namespace lve {
 
     std::unique_ptr<LvePipeline> lvePipeline;
     VkPipelineLayout pipelineLayout;
-    VkDescriptorSetLayout descriptorSetLayout; // 데이터 입력을 위한 레이아웃
+    std::unique_ptr<LveDescriptorSetLayout> descriptorSetLayout; // 데이터 입력을 위한 레이아웃
   };
 } // namespace lve
