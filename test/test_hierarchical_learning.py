@@ -25,7 +25,6 @@ import matplotlib.pyplot as plt
 # 프로젝트 루트를 경로에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pyramidal_layer import PyramidalLayer, DTYPE
-from src.gpu_debug_sender import sender as debug_sender # 디버거 송신 모듈 임포트
 
 # --- 기본 설정 ---
 GPU_AVAILABLE = cp.cuda.is_available()
@@ -132,15 +131,11 @@ def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current):
                     presynaptic_spikes[afferent_idx] = 1.0
             
             # Call the new, optimized competitive step method
-            result = layer.step_competitive(
+            layer.step_competitive(
                 presynaptic_spikes,
                 external_currents=base_current_gpu,
                 inhibition_current=inhibition_current
             )
-
-            # --- 실시간 디버거로 데이터 전송 ---
-            debug_sender.send_buffer(layer.membrane_potential, "L1_MembranePotential")
-            debug_sender.send_buffer(result.axon_spikes, "L1_AxonSpikes")
 
         if (trial + 1) % 50 == 0:
             print(f"  Trial {trial+1}/{trials} 완료...")
@@ -188,13 +183,7 @@ def train_layer2(layer1, layer2, patterns, trials, dt, base_current):
 
             # Layer 2 실행 (Layer 1의 출력을 입력으로 받음)
             l2_currents = cp.full(layer2.num_neurons, 0.6, dtype=DTYPE) # L2 자극 미세 조정
-            l2_result = layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
-
-            # --- 실시간 디버거로 데이터 전송 ---
-            debug_sender.send_buffer(layer1.membrane_potential, "L1_MembranePotential")
-            debug_sender.send_buffer(l1_result.axon_spikes, "L1_AxonSpikes")
-            debug_sender.send_buffer(layer2.membrane_potential, "L2_MembranePotential")
-            debug_sender.send_buffer(l2_result.axon_spikes, "L2_AxonSpikes")
+            layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
 
         if (trial + 1) % 50 == 0:
             print(f"  Trial {trial+1}/{trials} 완료...")
@@ -303,7 +292,4 @@ def test_hierarchical_learning():
     run_verification(layer1, layer2, patterns, dt, base_current)
 
 if __name__ == "__main__":
-    try:
-        test_hierarchical_learning()
-    finally:
-        debug_sender.close() # 프로그램 종료 시 ZMQ 리소스 해제
+    test_hierarchical_learning()

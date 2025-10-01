@@ -1,5 +1,7 @@
 #include "lve_pipeline.hpp"
 
+#include "lve_model.hpp"
+
 // std
 #include <cassert>
 #include <fstream>
@@ -187,8 +189,8 @@ void LvePipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo) {
   configInfo.colorBlendInfo.blendConstants[3] = 0.0f;  // Optional
 
   configInfo.depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-  configInfo.depthStencilInfo.depthTestEnable = VK_TRUE;
-  configInfo.depthStencilInfo.depthWriteEnable = VK_TRUE;
+  configInfo.depthStencilInfo.depthTestEnable = VK_FALSE;
+  configInfo.depthStencilInfo.depthWriteEnable = VK_FALSE;
   configInfo.depthStencilInfo.depthCompareOp = VK_COMPARE_OP_LESS;
   configInfo.depthStencilInfo.depthBoundsTestEnable = VK_FALSE;
   configInfo.depthStencilInfo.minDepthBounds = 0.0f;  // Optional
@@ -204,9 +206,8 @@ void LvePipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo) {
       static_cast<uint32_t>(configInfo.dynamicStateEnables.size());
   configInfo.dynamicStateInfo.flags = 0;
 
-  // No vertex input for now, this will be a blank screen
-  configInfo.bindingDescriptions.clear();
-  configInfo.attributeDescriptions.clear();
+  configInfo.bindingDescriptions = LveModel::Vertex::getBindingDescriptions();
+  configInfo.attributeDescriptions = LveModel::Vertex::getAttributeDescriptions();
 }
 
 void LvePipeline::enableAlphaBlending(PipelineConfigInfo& configInfo){

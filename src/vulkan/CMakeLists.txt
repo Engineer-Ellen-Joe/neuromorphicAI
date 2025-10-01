@@ -9,8 +9,6 @@ endif()
 
 cmake_minimum_required(VERSION 3.11.0)
 
-set(NAME LveEngine)
-
 message(STATUS "using ${CMAKE_GENERATOR}")
 if (CMAKE_GENERATOR STREQUAL "MinGW Makefiles")
   if (NOT MINGW_PATH)
@@ -21,7 +19,7 @@ if (CMAKE_GENERATOR STREQUAL "MinGW Makefiles")
   set(CMAKE_CXX_COMPILER  ${MINGW_PATH}/bin/g++.exe)
 endif()
 
-project(${NAME} VERSION 0.23.0)
+project(vulkan_engine VERSION 0.23.0)
 
 # 1. Set VULKAN_SDK_PATH in .env.cmake to target specific vulkan version
 if (DEFINED VULKAN_SDK_PATH)
@@ -102,25 +100,6 @@ else()
   message(STATUS "Using Bullet libs: ${Bullet_LIBRARIES}")
 endif()
 
-# Find ZeroMQ
-find_path(ZMQ_INCLUDE_DIR zmq.h HINTS
-  C:/msys64/ucrt64/include
-  /usr/local/include
-  /usr/include
-)
-find_library(ZMQ_LIBRARY NAMES zmq libzmq HINTS
-  C:/msys64/ucrt64/lib
-  /usr/local/lib
-  /usr/lib
-)
-
-if (NOT ZMQ_INCLUDE_DIR OR NOT ZMQ_LIBRARY)
-  message(FATAL_ERROR "Could not find ZeroMQ library! Please ensure it is installed and its path is in CMAKE_PREFIX_PATH or set ZMQ_ROOT_DIR.")
-else()
-  message(STATUS "Found ZeroMQ includes: ${ZMQ_INCLUDE_DIR}")
-  message(STATUS "Found ZeroMQ library: ${ZMQ_LIBRARY}")
-endif()
-
 include_directories(external)
 
 # If TINYOBJ_PATH not specified in .env.UNIX.cmake, try fetching from git repo
@@ -137,26 +116,31 @@ endif()
 
 file(GLOB_RECURSE SOURCES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+# Add ImGui source files to the library
+file(GLOB IMGUI_SOURCES
+    "${PROJECT_SOURCE_DIR}/external/imgui/*.cpp"
+    "${PROJECT_SOURCE_DIR}/external/imgui/backends/*.cpp"
+)
+list(APPEND SOURCES ${IMGUI_SOURCES})
 
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
-target_compile_definitions(${PROJECT_NAME} PRIVATE VK_USE_PLATFORM_WIN32_KHR ZMQ_BUILD_DRAFT_API)
 
-set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/build")
+add_library(vulkan_engine ${SOURCES})
+
+target_compile_features(vulkan_engine PUBLIC cxx_std_17)
 
 if (WIN32)
-  message(STATUS "CREATING BUILD FOR WINDOWS")
+  message(STATUS "CONFIGURING vulkan_engine FOR WINDOWS")
 
   if (USE_MINGW)
-    target_include_directories(${PROJECT_NAME} PUBLIC
+    target_include_directories(vulkan_engine PUBLIC
       ${MINGW_PATH}/include
     )
-    target_link_directories(${PROJECT_NAME} PUBLIC
+    target_link_directories(vulkan_engine PUBLIC
       ${MINGW_PATH}/lib
     )
   endif()
 
-  target_include_directories(${PROJECT_NAME} PUBLIC
+  target_include_directories(vulkan_engine PUBLIC
     ${PROJECT_SOURCE_DIR}/src
     ${Vulkan_INCLUDE_DIRS}
     ${TINYOBJ_PATH}
@@ -164,33 +148,29 @@ if (WIN32)
     ${GLFW_INCLUDE_DIRS}
     ${GLM_PATH}
     ${Bullet_INCLUDE_DIRS}
-    ${ZMQ_INCLUDE_DIR} # Add ZMQ include directory
-    ${PROJECT_SOURCE_DIR}/external/cppzmq-4.11.0 # Add cppzmq include path
-    ${PROJECT_SOURCE_DIR}/external/imgui # Correct ImGui include path
+    ${PROJECT_SOURCE_DIR}/external/imgui
+    ${PROJECT_SOURCE_DIR}/external/imgui/backends
     )
 
-  target_link_directories(${PROJECT_NAME} PUBLIC
+  target_link_directories(vulkan_engine PUBLIC
     ${Vulkan_LIBRARIES}
     ${GLFW_LIB}
     ${Bullet_LIBRARIES}
   )
 
-  target_link_libraries(${PROJECT_NAME} glfw3 vulkan-1 ${Bullet_LIBRARIES} ${ZMQ_LIBRARY})
+  target_link_libraries(vulkan_engine PUBLIC glfw3 vulkan-1 ${Bullet_LIBRARIES})
 elseif (UNIX)
-    message(STATUS "CREATING BUILD FOR UNIX")
-    target_include_directories(${PROJECT_NAME} PUBLIC
+    message(STATUS "CONFIGURING vulkan_engine FOR UNIX")
+    target_include_directories(vulkan_engine PUBLIC
       ${PROJECT_SOURCE_DIR}/src
       ${TINYOBJ_PATH}
       ${STB_PATH}
       ${Bullet_INCLUDE_DIRS}
-      ${ZMQ_INCLUDE_DIR} # Add ZMQ include directory
-      ${PROJECT_SOURCE_DIR}/external/cppzmq-4.11.0 # Add cppzmq include path
     )
-    target_link_libraries(${PROJECT_NAME}
+    target_link_libraries(vulkan_engine PUBLIC
       glfw
       ${Vulkan_LIBRARIES}
       ${Bullet_LIBRARIES}
-      ${ZMQ_LIBRARY}
     )
 endif()
 
