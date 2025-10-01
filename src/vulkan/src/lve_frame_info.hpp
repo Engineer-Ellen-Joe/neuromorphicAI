@@ -31,7 +31,7 @@ namespace lve{
         VkCommandBuffer commandBuffer;
         LveCamera &camera;
         VkDescriptorSet globalDescriptorSet;
-        LveDescriptorPool &frameDescriptorPool;  // pool of descriptors that is cleared each frame
-        LveGameObject::Map &gameObjects;
+        LveDescriptorPool *frameDescriptorPool;  // pool of descriptors that is cleared each frame
+        LveGameObject::Map *gameObjects;
     };
 } // namespace lve

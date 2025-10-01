@@ -116,6 +116,14 @@ endif()
 
 file(GLOB_RECURSE SOURCES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 
+# Add ImGui source files to the library
+file(GLOB IMGUI_SOURCES
+    "${PROJECT_SOURCE_DIR}/external/imgui/*.cpp"
+    "${PROJECT_SOURCE_DIR}/external/imgui/backends/*.cpp"
+)
+list(APPEND SOURCES ${IMGUI_SOURCES})
+
+
 add_library(vulkan_engine ${SOURCES})
 
 target_compile_features(vulkan_engine PUBLIC cxx_std_17)

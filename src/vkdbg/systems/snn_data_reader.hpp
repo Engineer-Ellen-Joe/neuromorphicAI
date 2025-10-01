@@ -4,40 +4,71 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <numeric> // For std::accumulate
 
 namespace lve {
 
-class SnnDataReader {
-public:
-    SnnDataReader(const std::string& shmName, size_t numNeurons);
+  class SnnDataReader {
+  public:
+    SnnDataReader(const std::string &shmName);
     ~SnnDataReader();
 
-    SnnDataReader(const SnnDataReader&) = delete;
-    SnnDataReader& operator=(const SnnDataReader&) = delete;
+    SnnDataReader(const SnnDataReader &) = delete;
+    SnnDataReader &operator=(const SnnDataReader &) = delete;
 
-    // Checks for new data in shared memory. If found, reads it into the internal buffer.
-    // Returns true if new data was read, false otherwise.
     bool checkForNewData();
 
-    // Returns a constant reference to the most recently read neuron data.
-    const std::vector<float>& getNeuronStates() const { return neuronStates; }
+    const std::vector<float> &getNeuronStates() const { return neuronStates_; }
+    int getNumLayers() const { return numLayers_; }
+    const std::vector<int> &getNeuronsPerLayer() const { return neuronsPerLayer_; }
+    int getTotalNeurons() const {
+        return std::accumulate(neuronsPerLayer_.begin(), neuronsPerLayer_.end(), 0);
+    }
 
-private:
+    // Synapse data accessors
+    int getNumConnections() const { return numConnections_; }
+    const std::vector<int>& getSourceIndices() const { return sourceIndices_; }
+    const std::vector<int>& getTargetIndices() const { return targetIndices_; }
+    const std::vector<float>& getWeights() const { return weights_; }
+
+    // Input Synapse data accessors
+    int getNumInputSynapses() const { return numInputSynapses_; }
+    const std::vector<int>& getInputTargetIndices() const { return inputTargetIndices_; }
+    const std::vector<float>& getInputWeights() const { return inputWeights_; }
+
+    // Additional neuron data
+    const std::vector<float>& getCompetitionValues() const { return competitionValues_; }
+
+  private:
     void connect();
     void disconnect();
 
-    // Shared memory properties
-    std::string shmName;
-    size_t numNeurons;
-    size_t bufferSize;
+    std::string shmName_;
+    size_t bufferSize_ = 0; 
 
-    // Win32 handles
-    HANDLE hMapFile = nullptr;
-    void* pBuf = nullptr;
+    HANDLE hMapFile_ = nullptr;
+    void *pBuf_ = nullptr;
 
-    // Data
-    std::vector<float> neuronStates;
-    uint64_t lastVersion = -1;
-};
+    std::vector<float> neuronStates_;
+    uint64_t lastVersion_ = -1;
+
+    // SNN structure info
+    int numLayers_ = 0;
+    std::vector<int> neuronsPerLayer_;
+
+    // Synapse info
+    int numConnections_ = 0;
+    std::vector<int> sourceIndices_;
+    std::vector<int> targetIndices_;
+    std::vector<float> weights_;
+
+    // Input Synapse info
+    int numInputSynapses_ = 0;
+    std::vector<int> inputTargetIndices_;
+    std::vector<float> inputWeights_;
+
+    // Additional neuron data
+    std::vector<float> competitionValues_;
+  };
 
 } // namespace lve
