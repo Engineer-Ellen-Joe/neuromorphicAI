@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 # 프로젝트 루트를 경로에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pyramidal_layer import PyramidalLayer, DTYPE
+from src.snn_visualizer_client import SNNVisualizer
 
 # --- 기본 설정 ---
 GPU_AVAILABLE = cp.cuda.is_available()
@@ -110,7 +111,7 @@ def define_patterns(num_afferents, dt):
     
     return pattern_A_spikes, pattern_B_spikes, pattern_duration_steps, pattern_A_afferents, pattern_B_afferents
 
-def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current):
+def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current, visualizer=None):
     """1계층 뉴런들의 역할 분담을 위한 경쟁 학습을 수행합니다. (Optimized)"""
     print("--- 1단계: Layer 1 경쟁 학습 시작 (Optimized) ---")
     pA_spikes, pB_spikes, p_steps = patterns['pA_spikes'], patterns['pB_spikes'], patterns['p_steps']
@@ -118,6 +119,11 @@ def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current):
 
     # Prepare a constant external current array on the GPU
     base_current_gpu = cp.full(layer.num_neurons, base_current, dtype=DTYPE)
+
+    num_afferents_l1 = layer.num_afferents
+    num_neurons_l1 = layer.num_neurons
+    # For visualization, we assume L2 is not active yet.
+    num_neurons_l2 = visualizer.layer_structure[2] if visualizer else 0
 
     for trial in range(trials):
         pattern_spikes = pattern_choices[np.random.randint(len(pattern_choices))]
@@ -131,10 +137,32 @@ def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current):
                     presynaptic_spikes[afferent_idx] = 1.0
             
             # Call the new, optimized competitive step method
-            layer.step_competitive(
+            result = layer.step_competitive(
                 presynaptic_spikes,
                 external_currents=base_current_gpu,
                 inhibition_current=inhibition_current
+            )
+
+        if visualizer:
+            # Combine neuron states for visualization
+            # Input layer spikes + Layer 1 spikes + Layer 2 (zeros)
+            vis_neuron_states = np.concatenate([
+                presynaptic_spikes.get(),
+                (result.axon_spikes > 0).get().astype(np.float32),
+                np.zeros(num_neurons_l2, dtype=np.float32)
+            ])
+            # Combine weights for visualization
+            l1_w = layer.input_weights.get().flatten()
+            # L2 weights are not trained yet, so we can send zeros or initial
+
+            l2_w_size = num_neurons_l1 * num_neurons_l2
+            l2_w = np.zeros(l2_w_size, dtype=np.float32)
+
+            vis_weights = np.concatenate([l1_w, l2_w])
+
+            visualizer.update(
+                neuron_states=vis_neuron_states,
+                weights=vis_weights
             )
 
         if (trial + 1) % 50 == 0:
@@ -143,7 +171,7 @@ def train_layer1(layer, patterns, trials, dt, base_current, inhibition_current):
     layer.input_learning_rate = 0.0 # Layer 1 학습 고정
     print("--- 1단계: Layer 1 경쟁 학습 완료 (가중치 고정) ---")
 
-def train_layer2(layer1, layer2, patterns, trials, dt, base_current):
+def train_layer2(layer1, layer2, patterns, trials, dt, base_current, visualizer=None):
     """2계층 뉴런의 문맥 학습을 수행합니다."""
     print("\n--- 2단계: Layer 2 문맥 학습 시작 ---")
     pA_spikes, pB_spikes, p_steps = patterns['pA_spikes'], patterns['pB_spikes'], patterns['p_steps']
@@ -183,7 +211,24 @@ def train_layer2(layer1, layer2, patterns, trials, dt, base_current):
 
             # Layer 2 실행 (Layer 1의 출력을 입력으로 받음)
             l2_currents = cp.full(layer2.num_neurons, 0.6, dtype=DTYPE) # L2 자극 미세 조정
-            layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
+            # layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
+            l2_result = layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
+
+            if visualizer:
+                vis_neuron_states = np.concatenate([
+                    l1_input_spikes.get(),
+                    (l1_result.axon_spikes > 0).get().astype(np.float32),
+                    (l2_result.axon_spikes > 0).get().astype(np.float32)
+                ])
+
+                l1_w = layer1.input_weights.get().flatten()
+                l2_w = layer2.input_weights.get().flatten()
+                vis_weights = np.concatenate([l1_w, l2_w])
+
+                visualizer.update(
+                    neuron_states=vis_neuron_states,
+                    weights=vis_weights
+                )
 
         if (trial + 1) % 50 == 0:
             print(f"  Trial {trial+1}/{trials} 완료...")
@@ -191,7 +236,7 @@ def train_layer2(layer1, layer2, patterns, trials, dt, base_current):
     layer2.input_learning_rate = 0.0 # Layer 2 학습 고정
     print("--- 2단계: Layer 2 문맥 학습 완료 (가중치 고정) ---")
 
-def run_verification(layer1, layer2, patterns, dt, base_current):
+def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None):
     """학습된 네트워크의 문맥 이해도를 검증합니다."""
     print("\n--- 3단계: 학습 결과 검증 시작 ---")
     pA_spikes, pB_spikes, p_steps = patterns['pA_spikes'], patterns['pB_spikes'], patterns['p_steps']
@@ -204,6 +249,12 @@ def run_verification(layer1, layer2, patterns, dt, base_current):
         "'B' 패턴만 제시": [pB_spikes]
     }
 
+    # Get final weights for visualization during verification
+    if visualizer:
+        l1_w = layer1.input_weights.get().flatten()
+        l2_w = layer2.input_weights.get().flatten()
+        vis_weights = np.concatenate([l1_w, l2_w])
+
     for case_name, sequence in test_cases.items():
         layer1.reset_state()
         layer2.reset_state()
@@ -214,6 +265,8 @@ def run_verification(layer1, layer2, patterns, dt, base_current):
 
         l2_total_spikes = 0
         inhibition_l1 = cp.zeros(layer1.num_neurons, dtype=DTYPE)
+
+        print(f"\n  [질문] {case_name}")
 
         for step in range(total_steps):
             current_pattern_spikes = []
@@ -240,6 +293,18 @@ def run_verification(layer1, layer2, patterns, dt, base_current):
                 l2_result = layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
                 l2_total_spikes += cp.sum(l2_result.axon_spikes)
 
+                if visualizer:
+                    vis_neuron_states = np.concatenate([
+                        l1_input_spikes.get(),
+                        (l1_result.axon_spikes > 0).get().astype(np.float32),
+                        (l2_result.axon_spikes > 0).get().astype(np.float32)
+                    ])
+                    # Weights are fixed during verification, so send the final weights
+                    visualizer.update(
+                        neuron_states=vis_neuron_states,
+                        weights=vis_weights
+                    )
+
         print(f"  [질문] {case_name} -> [응답] Layer 2 총 발화 횟수: {int(l2_total_spikes)}")
 
 def test_hierarchical_learning():
@@ -265,12 +330,12 @@ def test_hierarchical_learning():
     }
 
     # --- Layer 1 설정 (경쟁 학습용) ---
-    l1_weights = cp.random.uniform(0.2, 0.5, size=(num_neurons_l1, num_afferents_l1)).astype(DTYPE)
-    l1_weights[0:num_neurons_l1//2, pA_aff] += 0.3
-    l1_weights[num_neurons_l1//2:, pB_aff] += 0.3
+    l1_weights_init = cp.random.uniform(0.2, 0.5, size=(num_neurons_l1, num_afferents_l1)).astype(DTYPE)
+    l1_weights_init[0:num_neurons_l1//2, pA_aff] += 0.3
+    l1_weights_init[num_neurons_l1//2:, pB_aff] += 0.3
     layer1 = PyramidalLayer(
         num_neurons=num_neurons_l1, num_afferents=num_afferents_l1, num_branches=1,
-        dt=dt, input_learning_rate=0.002, initial_input_weights=l1_weights
+        dt=dt, input_learning_rate=0.002, initial_input_weights=l1_weights_init
     )
 
     # --- Layer 2 설정 (문맥 학습용) ---
@@ -280,16 +345,58 @@ def test_hierarchical_learning():
     )
     # --- Layer 2 초기 편향 추가 ---
     # L2의 0번 뉴런이 L1의 A-전문가 뉴런에 더 민감하게 반응하도록 설정
-    l2_weights = cp.random.uniform(0.2, 0.5, size=(num_neurons_l2, num_neurons_l1)).astype(DTYPE)
+    l2_weights_init = cp.random.uniform(0.2, 0.5, size=(num_neurons_l2, num_neurons_l1)).astype(DTYPE)
     l1_A_specialists = cp.arange(0, num_neurons_l1 // 2)
-    l2_weights[0, l1_A_specialists] += 0.3
-    layer2.input_weights = l2_weights
+    l2_weights_init[0, l1_A_specialists] += 0.3
+    layer2.input_weights = l2_weights_init
 
-    # --- 학습 및 검증 실행 ---
-    train_layer1(layer1, patterns, trials=200, dt=dt, base_current=base_current, inhibition_current=inhibition_current)
-    verify_and_visualize_layer1(layer1, patterns, dt, base_current, inhibition_current)
-    train_layer2(layer1, layer2, patterns, trials=300, dt=dt, base_current=base_current)
-    run_verification(layer1, layer2, patterns, dt, base_current)
+    # --- SNN Visualizer 초기화 ---
+    visualizer = None
+    try:
+        print("\n--- Visualizer 초기화 시작 ---")
+        # 시각화를 위한 네트워크 구조 정의
+        vis_layer_structure = [num_afferents_l1, num_neurons_l1, num_neurons_l2]
+
+        # 연결 정보 추출 (입력 -> L1)
+        l1_sources, l1_targets = np.mgrid[0:num_afferents_l1, 0:num_neurons_l1]
+        l1_s = l1_sources.flatten()
+        l1_t = l1_targets.flatten() + num_afferents_l1 # L1 뉴런 인덱스 오프셋
+        l1_w = layer1.input_weights.get().flatten()
+
+        # 연결 정보 추출 (L1 -> L2)
+        l2_sources, l2_targets = np.mgrid[0:num_neurons_l1, 0:num_neurons_l2]
+        l2_s = l2_sources.flatten() + num_afferents_l1 # L1 뉴런 인덱스 오프셋
+        l2_t = l2_targets.flatten() + num_afferents_l1 + num_neurons_l1 # L2 뉴런 인덱스 오프셋
+        l2_w = layer2.input_weights.get().flatten()
+
+        # 시각화를 위한 전체 연결 정보 취합
+        vis_connections = (
+            np.concatenate([l1_s, l2_s]).astype(np.int32).tolist(),
+            np.concatenate([l1_t, l2_t]).astype(np.int32).tolist(),
+            np.concatenate([l1_w, l2_w]).astype(np.float32).tolist()
+        )
+
+        # 입력 시냅스는 없으므로 빈 리스트 전달
+        vis_input_synapses = ([], [])
+
+        visualizer = SNNVisualizer(
+            layer_structure=vis_layer_structure,
+            connections=vis_connections,
+            input_synapses=vis_input_synapses
+        )
+        print("--- Visualizer 초기화 완료 ---")
+
+        # --- 학습 및 검증 실행 ---
+        train_layer1(layer1, patterns, trials=200, dt=dt, base_current=base_current, inhibition_current=inhibition_current, visualizer=visualizer)
+        verify_and_visualize_layer1(layer1, patterns, dt, base_current, inhibition_current)
+        train_layer2(layer1, layer2, patterns, trials=300, dt=dt, base_current=base_current, visualizer=visualizer)
+        run_verification(layer1, layer2, patterns, dt, base_current)
+    except Exception as e:
+        print(f"시뮬레이션 중 오류 발생: {e}")
+    finally:
+        if visualizer:
+            visualizer.close()
+            print("--- Visualizer 종료 ---")
 
 if __name__ == "__main__":
     test_hierarchical_learning()

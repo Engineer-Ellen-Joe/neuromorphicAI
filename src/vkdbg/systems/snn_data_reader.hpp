@@ -37,7 +37,7 @@ namespace lve {
     const std::vector<float>& getInputWeights() const { return inputWeights_; }
 
     // Additional neuron data
-    const std::vector<float>& getCompetitionValues() const { return competitionValues_; }
+    // const std::vector<float>& getCompetitionValues() const { return competitionValues_; }
 
   private:
     void connect();
@@ -68,7 +68,7 @@ namespace lve {
     std::vector<float> inputWeights_;
 
     // Additional neuron data
-    std::vector<float> competitionValues_;
+    // std::vector<float> competitionValues_;
   };
 
 } // namespace lve
