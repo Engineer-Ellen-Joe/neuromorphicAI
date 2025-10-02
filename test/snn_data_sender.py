@@ -1,14 +1,16 @@
-import multiprocessing.shared_memory as shared_memory
-import cupy as cp
 import numpy as np
 import time
-import struct
 import random
+import sys
+import os
+
+# Add src directory to Python path to import the new module
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+from snn_visualizer_client import SNNVisualizer
 
 # --- Configuration ---
 LAYER_STRUCTURE = [10, 20, 10]
 NUM_INPUTS = 5 # Number of external input signals
-SHM_NAME = "snn_visualization_shm"
 
 def generate_dummy_connections(layer_structure):
     source_indices, target_indices, weights = [], [], []
@@ -35,90 +37,50 @@ def generate_dummy_input_synapses(num_inputs, first_layer_size):
     return input_target_indices, input_weights
 
 def main():
-    print("SNN Data Sender starting with FINAL structure...")
-    
-    # --- Prepare Data Structure ---
-    NUM_LAYERS = len(LAYER_STRUCTURE)
-    TOTAL_NEURONS = sum(LAYER_STRUCTURE)
-    
-    source_indices, target_indices, weights = generate_dummy_connections(LAYER_STRUCTURE)
-    NUM_CONNECTIONS = len(source_indices)
+    """
+    This script now acts as a simple test case for the SNNVisualizer module.
+    """
+    print("--- Starting Test Script for SNNVisualizer Module ---")
 
-    input_target_indices, input_weights = generate_dummy_input_synapses(NUM_INPUTS, LAYER_STRUCTURE[0])
-    NUM_INPUT_SYNAPSES = len(input_target_indices)
+    # --- 1. Prepare Network Structure Data ---
+    connections = generate_dummy_connections(LAYER_STRUCTURE)
+    input_synapses = generate_dummy_input_synapses(NUM_INPUTS, LAYER_STRUCTURE[0])
+    total_neurons = sum(LAYER_STRUCTURE)
 
-    # --- Calculate Buffer Size ---
-    # Header: version, num_layers, num_connections, num_input_synapses
-    header_format = '@Qiii'
-    header_size = struct.calcsize(header_format)
-
-    # Body: arrays of data
-    body_format_str = (
-        f'{NUM_LAYERS}i'          # neurons_per_layer
-        f'{TOTAL_NEURONS}f'      # neuron_states
-        f'{TOTAL_NEURONS}f'      # competition_values
-        f'{NUM_CONNECTIONS}i'    # source_indices
-        f'{NUM_CONNECTIONS}i'    # target_indices
-        f'{NUM_CONNECTIONS}f'    # weights
-        f'{NUM_INPUT_SYNAPSES}i' # input_target_indices
-        f'{NUM_INPUT_SYNAPSES}f' # input_weights
-    )
-    body_format = f'@{body_format_str}'
-    body_size = struct.calcsize(body_format)
-    BUFFER_SIZE = header_size + body_size
-    
-    shm = None
+    visualizer = None
     try:
-        # --- Shared Memory Setup ---
-        try:
-            shm = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE, name=SHM_NAME)
-            print(f"Created SHM '{SHM_NAME}' with size {BUFFER_SIZE} bytes.")
-        except FileExistsError:
-            shm = shared_memory.SharedMemory(name=SHM_NAME)
-            print(f"Attached to existing SHM '{SHM_NAME}'.")
+        # --- 2. Initialize the Visualizer ---
+        # This will create the shared memory and send the network structure.
+        visualizer = SNNVisualizer(
+            layer_structure=LAYER_STRUCTURE,
+            connections=connections,
+            input_synapses=input_synapses
+        )
 
-        print(f"Sending: {NUM_LAYERS} layers, {TOTAL_NEURONS} neurons, {NUM_CONNECTIONS} connections, {NUM_INPUT_SYNAPSES} inputs.")
-
-        version = 0
+        # --- 3. Run the Main Loop ---
+        # In a real application, this loop would be part of the SNN simulation.
+        print("Starting data transmission loop...")
         while True:
-            # 1. Generate dummy data
-            cpu_neuron_states = np.random.rand(TOTAL_NEURONS).astype(np.float32)
-            cpu_competition_values = np.random.rand(TOTAL_NEURONS).astype(np.float32)
-            # In a real scenario, weights would also be updated
+            # Generate dynamic data (e.g., from the SNN simulation)
+            neuron_states = np.random.rand(total_neurons).astype(np.float32)
+            
+            # Update the visualizer with the new neuron states
+            visualizer.update(neuron_states)
+            
+            if visualizer.version % 120 == 0:
+                print(f"Version: {visualizer.version}")
 
-            # 2. Pack header
-            header_data = struct.pack(header_format, version, NUM_LAYERS, NUM_CONNECTIONS, NUM_INPUT_SYNAPSES)
-
-            # 3. Pack body
-            body_data = struct.pack(
-                body_format,
-                *LAYER_STRUCTURE,
-                *cpu_neuron_states,
-                *cpu_competition_values,
-                *source_indices,
-                *target_indices,
-                *weights,
-                *input_target_indices,
-                *input_weights
-            )
-
-            # 4. Write to shared memory
-            shm.buf[:header_size] = header_data
-            shm.buf[header_size:BUFFER_SIZE] = body_data
-
-            if version % 120 == 0:
-                print(f"Version: {version}")
-
-            version += 1
             time.sleep(1/60)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
+    except Exception as e:
+        print(f"An error occurred: {e}")
     finally:
-        if shm is not None:
-            shm.close()
-            shm.unlink()
-            print("Shared memory unlinked.")
+        # --- 4. Clean up ---
+        if visualizer is not None:
+            visualizer.close()
+            print("Visualizer closed.")
 
 if __name__ == "__main__":
     main()

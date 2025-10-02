@@ -49,7 +49,7 @@ namespace lve {
         offset += numLayers_ * sizeof(int);
         int totalNeurons = getTotalNeurons();
         neuronStates_.resize(totalNeurons);
-        competitionValues_.resize(totalNeurons);
+        // competitionValues_.resize(totalNeurons);
         sourceIndices_.resize(numConnections_);
         targetIndices_.resize(numConnections_);
         weights_.resize(numConnections_);
@@ -57,8 +57,8 @@ namespace lve {
         inputWeights_.resize(numInputSynapses_);
         memcpy(neuronStates_.data(), ptr + offset, totalNeurons * sizeof(float));
         offset += totalNeurons * sizeof(float);
-        memcpy(competitionValues_.data(), ptr + offset, totalNeurons * sizeof(float));
-        offset += totalNeurons * sizeof(float);
+        // memcpy(competitionValues_.data(), ptr + offset, totalNeurons * sizeof(float));
+        // offset += totalNeurons * sizeof(float);
         memcpy(sourceIndices_.data(), ptr + offset, numConnections_ * sizeof(int));
         offset += numConnections_ * sizeof(int);
         memcpy(targetIndices_.data(), ptr + offset, numConnections_ * sizeof(int));
@@ -72,8 +72,8 @@ namespace lve {
         int totalNeurons = getTotalNeurons();
         size_t base_offset = sizeof(uint64_t) + sizeof(int) * 3 + numLayers_ * sizeof(int);
         memcpy(neuronStates_.data(), ptr + base_offset, totalNeurons * sizeof(float));
-        memcpy(competitionValues_.data(), ptr + base_offset + totalNeurons * sizeof(float), totalNeurons * sizeof(float));
-        size_t weights_offset = base_offset + totalNeurons * sizeof(float) * 2 + numConnections_ * sizeof(int) * 2;
+        // memcpy(competitionValues_.data(), ptr + base_offset + totalNeurons * sizeof(float), totalNeurons * sizeof(float));
+        size_t weights_offset = base_offset + totalNeurons * sizeof(float) + numConnections_ * sizeof(int) * 2;
         memcpy(weights_.data(), ptr + weights_offset, numConnections_ * sizeof(float));
         size_t input_weights_offset = weights_offset + numConnections_ * sizeof(float) + numInputSynapses_ * sizeof(int);
         memcpy(inputWeights_.data(), ptr + input_weights_offset, numInputSynapses_ * sizeof(float));

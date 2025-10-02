@@ -79,10 +79,17 @@ namespace lve {
       camera.setViewDirection(glm::vec3(cameraPosition_, -1.0f), glm::vec3{0.f, 0.f, 1.f});
 
       ImGui::Begin("Debug Controls");
+      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Neuron Competition deactivated");
+      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "NO Input Values");
       ImGui::Checkbox("Show Synapses", &neuronRenderSystem->renderSynapses);
       ImGui::Checkbox("Show Input Values", &showInputText_);
       ImGui::Checkbox("Show Synapse Weights", &showSynapseText_);
       // ImGui::Checkbox("Show Neuron Competition", &showNeuronText_);
+      ImGui::Text("--- Shared Memory Info ---");
+      ImGui::Text("Name: snn_visualization_shm");
+      ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Warning: Ensure Python sender is running!");
+      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Check data structure if corrupted.");
+      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "If sender crashes, manually clear SHM.");
       ImGui::End();
 
       // Text Rendering Logic
@@ -121,7 +128,7 @@ namespace lve {
                 (clipPos.y / clipPos.w + 1.0f) * 0.5f * windowSize.y}; // Corrected Y calculation
             char text[16];
             sprintf(text, "%.2f", weights[i]);
-            drawList->AddText(ImVec2(screenPos.x - 400, screenPos.y), IM_COL32(150, 150, 255, 255), text);
+            drawList->AddText(ImVec2(screenPos.x - 200, screenPos.y), IM_COL32(150, 150, 255, 255), text);
           }
         }
       }
