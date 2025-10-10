@@ -30,6 +30,13 @@ from src.snn_visualizer_client import SNNVisualizer
 # --- 기본 설정 ---
 GPU_AVAILABLE = cp.cuda.is_available()
 
+try:
+    plt.rcParams['font.family'] = 'Noto Sans KR'
+    plt.rcParams['axes.unicode_minus'] = False
+except Exception:
+    print("Noto Sans KR 폰트를 찾을 수 없습니다. 기본 폰트를 사용합니다.")
+    pass
+
 def verify_and_visualize_layer1(layer, patterns, dt, base_current, inhibition_current):
     """학습된 1계층의 역할 분담 결과를 검증하고 시각화합니다."""
     print("\n--- 중간 검증: Layer 1 역할 분담 확인 ---")
@@ -211,8 +218,11 @@ def train_layer2(layer1, layer2, patterns, trials, dt, base_current, visualizer=
 
             # Layer 2 실행 (Layer 1의 출력을 입력으로 받음)
             l2_currents = cp.full(layer2.num_neurons, 0.6, dtype=DTYPE) # L2 자극 미세 조정
-            # layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
-            l2_result = layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
+            l2_result = layer2.step_competitive(
+                l1_result.axon_spikes,
+                external_currents=l2_currents,
+                inhibition_current=-0.5  # L2의 경쟁을 위한 억제 전류 추가
+            )
 
             if visualizer:
                 vis_neuron_states = np.concatenate([
@@ -237,7 +247,7 @@ def train_layer2(layer1, layer2, patterns, trials, dt, base_current, visualizer=
     print("--- 2단계: Layer 2 문맥 학습 완료 (가중치 고정) ---")
 
 def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None):
-    """학습된 네트워크의 문맥 이해도를 검증합니다."""
+    """학습된 네트워크의 문맥 이해도를 검증하고 시각화합니다."""
     print("\n--- 3단계: 학습 결과 검증 시작 ---")
     pA_spikes, pB_spikes, p_steps = patterns['pA_spikes'], patterns['pB_spikes'], patterns['p_steps']
     sequence_gap_steps = int(20 / dt)
@@ -249,7 +259,9 @@ def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None
         "'B' 패턴만 제시": [pB_spikes]
     }
 
-    # Get final weights for visualization during verification
+    # 시각화를 위한 결과 저장소
+    verification_results = {}
+
     if visualizer:
         l1_w = layer1.input_weights.get().flatten()
         l2_w = layer2.input_weights.get().flatten()
@@ -263,12 +275,13 @@ def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None
         if not sequence:
             total_steps = 0
 
-        l2_total_spikes = 0
-        inhibition_l1 = cp.zeros(layer1.num_neurons, dtype=DTYPE)
+        # 뉴런별 스파이크 카운트
+        l2_spike_counts = cp.zeros(layer2.num_neurons, dtype=cp.int32)
 
         print(f"\n  [질문] {case_name}")
 
         for step in range(total_steps):
+            # ... (기존 스텝 실행 로직은 동일)
             current_pattern_spikes = []
             current_pattern_idx = step // (p_steps + sequence_gap_steps)
             if current_pattern_idx < len(sequence):
@@ -280,18 +293,21 @@ def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None
                     if step_in_pattern == t:
                         l1_input_spikes[afferent_idx] = 1.0
 
-                # Layer 1 실행 (Optimized, 경쟁만)
                 base_current_gpu_l1 = cp.full(layer1.num_neurons, base_current, dtype=DTYPE)
                 l1_result = layer1.step_competitive(
                     l1_input_spikes,
                     external_currents=base_current_gpu_l1,
-                    inhibition_current=-0.5 # L1의 경쟁을 위한 억제 전류
+                    inhibition_current=-0.5
                 )
 
-                # Layer 2 실행 (학습 없이 반응만)
-                l2_currents = cp.full(layer2.num_neurons, 0.6, dtype=DTYPE) # L2 자극 미세 조정
-                l2_result = layer2.step(l1_result.axon_spikes, external_currents=l2_currents)
-                l2_total_spikes += cp.sum(l2_result.axon_spikes)
+                l2_currents = cp.full(layer2.num_neurons, 0.6, dtype=DTYPE)
+                l2_result = layer2.step_competitive(
+                    l1_result.axon_spikes,
+                    external_currents=l2_currents,
+                    inhibition_current=-0.5
+                )
+                # 뉴런별 스파이크 집계
+                l2_spike_counts += (l2_result.axon_spikes > 0).astype(cp.int32)
 
                 if visualizer:
                     vis_neuron_states = np.concatenate([
@@ -299,13 +315,41 @@ def run_verification(layer1, layer2, patterns, dt, base_current, visualizer=None
                         (l1_result.axon_spikes > 0).get().astype(np.float32),
                         (l2_result.axon_spikes > 0).get().astype(np.float32)
                     ])
-                    # Weights are fixed during verification, so send the final weights
                     visualizer.update(
                         neuron_states=vis_neuron_states,
                         weights=vis_weights
                     )
+        
+        total_spikes = int(cp.sum(l2_spike_counts))
+        print(f"  [질문] {case_name} -> [응답] Layer 2 총 발화 횟수: {total_spikes}")
+        verification_results[case_name] = l2_spike_counts.get()
 
-        print(f"  [질문] {case_name} -> [응답] Layer 2 총 발화 횟수: {int(l2_total_spikes)}")
+    # --- Layer 2 전문화 결과 시각화 ---
+    print("\n--- Layer 2 문맥 전문화 결과 시각화 ---")
+    case_names = list(verification_results.keys())
+    neuron_indices = np.arange(layer2.num_neurons)
+    num_cases = len(case_names)
+    bar_width = 0.8 / num_cases
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    for i, case_name in enumerate(case_names):
+        offsets = (i - num_cases / 2 + 0.5) * bar_width
+        spike_counts = verification_results[case_name]
+        ax.bar(neuron_indices + offsets, spike_counts, bar_width, label=case_name)
+
+    ax.set_xlabel('Layer 2 Neuron Index')
+    ax.set_ylabel('Total Spikes')
+    ax.set_title('Layer 2 Context Specialization Results')
+    ax.set_xticks(neuron_indices)
+    ax.legend(title="Input Sequence")
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    fig.tight_layout()
+
+    save_path = os.path.join(os.path.dirname(__file__), 'l2_context_specialization.png')
+    plt.savefig(save_path)
+    print(f"  - L2 검증 그래프 저장 완료: {save_path}")
+    plt.close(fig)
 
 def test_hierarchical_learning():
     if not GPU_AVAILABLE:
