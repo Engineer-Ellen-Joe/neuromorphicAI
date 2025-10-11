@@ -36,3 +36,15 @@ the installation will add soon!
 |Command|Description|
 |:---|:---|
 |```CTRL + C```|Shutdown the model|
+
+## Open Source Acknowledgment
+
+Ellen Project uses components from the following open-source project:
+
+- **Open Korean Text (Okt)** — Licensed under the **Apache License 2.0**  
+  Source: [https://github.com/open-korean-text/open-korean-text](https://github.com/open-korean-text/open-korean-text)
+
+The Okt library is included in this project as a pre-built `.jar` file under  
+`src/external/okt/`, along with its original LICENSE and README files.
+
+see [NOTICE](NOTICE) for details.
