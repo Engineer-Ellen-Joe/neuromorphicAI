@@ -1,0 +1,2 @@
+to build backend you need to install
+MSVC 2022(x64) + nvcc
