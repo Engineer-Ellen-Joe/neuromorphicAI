@@ -1,2 +1,0 @@
-# Optional set TINYOBJ_PATH to target specific version, otherwise defaults to external/tinyobjloader
-set(TINYOBJ_PATH /run/media/paperttowel/System/Dev/2025/littleVulkanGameEngine/external/tinyobjloader)
